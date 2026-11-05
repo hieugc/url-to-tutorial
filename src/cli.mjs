@@ -1,0 +1,41 @@
+#!/usr/bin/env node
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { parseArgs } from 'node:util';
+import { createServer } from 'node:http';
+import path from 'node:path';
+import { discover } from './discover.mjs';
+import { render } from './render.mjs';
+import { Plan } from './plan.mjs';
+
+const { values, positionals } = parseArgs({ allowPositionals: true, options: {
+  out: { type: 'string' }, headed: { type: 'boolean', default: false }, language: { type: 'string', default: 'vi' },
+} });
+const [action, input] = positionals;
+const outDir = values.out || `output/${new Date().toISOString().replace(/[:.]/g, '-')}`;
+try {
+  if (action === 'discover' || action === 'run') {
+    const plan = await discover(input, values);
+    await mkdir(outDir, { recursive: true });
+    await writeFile(path.join(outDir, 'plan.json'), JSON.stringify(plan, null, 2));
+    console.log(`Plan: ${outDir}/plan.json (overview; no automatic clicks)`);
+    if (action === 'run') console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
+  } else if (['render', 'preview', 'validate'].includes(action)) {
+    const plan = Plan.parse(JSON.parse(await readFile(input, 'utf8')));
+    if (action === 'validate') console.log(`Valid plan: ${plan.steps.length} steps`);
+    else console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed, preview: action === 'preview' }), null, 2));
+  } else if (action === 'demo') {
+    const html = await readFile(new URL('../examples/demo.html', import.meta.url));
+    const server = createServer((_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(html); });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const plan = JSON.parse(await readFile(new URL('../examples/demo.plan.json', import.meta.url), 'utf8'));
+      plan.url = `http://127.0.0.1:${server.address().port}`;
+      await mkdir(outDir, { recursive: true });
+      await writeFile(path.join(outDir, 'plan.json'), JSON.stringify(plan, null, 2));
+      console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
+    } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+  } else {
+    console.log('Commands: discover <url> | run <url> | validate <plan.json> | preview <plan.json> | render <plan.json> | demo\nOptions: --out output/name --headed --language vi|en');
+    if (action) process.exitCode = 1;
+  }
+} catch (error) { console.error(error.message); process.exitCode = 1; }

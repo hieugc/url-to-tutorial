@@ -1,0 +1,7 @@
+node_modules/
+output/
+.env*
+!.env.example
+auth/
+*.log
+.DS_Store

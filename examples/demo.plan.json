@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "title": "Hướng dẫn chọn hosting — demo",
+  "url": "http://127.0.0.1:4173",
+  "language": "vi",
+  "mode": "task",
+  "viewport": { "width": 1280, "height": 720 },
+  "steps": [
+    { "id": "intro", "title": "Bắt đầu từ nhu cầu của bạn", "description": "Xác định loại website trước khi chọn gói hosting.", "target": { "css": "#hero" }, "holdMs": 2500 },
+    { "id": "compare", "title": "So sánh các gói", "description": "Kiểm tra tài nguyên, giới hạn website và giá gia hạn. Đây là dữ liệu minh họa.", "target": { "css": "#plans" }, "holdMs": 3000 },
+    { "id": "choose", "title": "Chọn gói phù hợp", "description": "Nhấn Chọn Premium để mở phần kiểm tra gói trong demo.", "target": { "role": "button", "name": "Chọn Premium" }, "action": "click", "reviewed": true, "expected": { "css": "#cart-title" }, "holdMs": 2500 },
+    { "id": "stop", "title": "Kiểm tra trước khi thanh toán", "description": "Xem lại kỳ hạn và điều kiện. Video hướng dẫn kết thúc ở đây; không thực hiện thanh toán.", "target": { "css": "#cart" }, "action": "stop", "holdMs": 3500 }
+  ]
+}
