@@ -32,8 +32,8 @@ Mỗi lần chạy nên dùng thư mục output mới. Kết quả: `tutorial.mp
 
 | Chế độ | Hiện có | Giới hạn |
 |---|---|---|
-| Overview — chỉ nhập URL | Tìm tối đa 8 tiêu đề/nút/link đang hiển thị, sinh kịch bản spotlight, xuất MP4 | Lời hướng dẫn theo mẫu; không hiểu mục tiêu nghiệp vụ; không tự khám phá nhiều trang |
-| Task — URL + kịch bản | Highlight, click, fill, navigate, stop; kiểm tra phần tử kỳ vọng sau thao tác | Bạn viết/sửa JSON; bước có tác động phải đặt `reviewed: true`; không tự sinh workflow bằng AI |
+| Overview — chỉ nhập URL | Tìm tối đa 8 tiêu đề/nút/link trên trang đầu, sinh kịch bản spotlight, xuất MP4 | Lời hướng dẫn theo mẫu; chưa hiểu mục tiêu nghiệp vụ; nhiều trang cần discover --max-pages rồi assemble |
+| Task — URL + kịch bản | Highlight, click, fill, navigate, IF/ELSE branch, next/jump và kiểm tra phần tử kỳ vọng | Bạn viết/sửa JSON; click/fill/navigate phải được duyệt; chưa tự sinh workflow bằng AI |
 
 Ví dụ một bước thao tác:
 
@@ -91,6 +91,37 @@ Xem [kiến trúc và API dự kiến](docs/ARCHITECTURE.md), [đánh giá repo 
 npm run tutorial -- discover https://driverjs.com --max-pages 3 --out output/driver-multipage
 ```
 
-`--max-pages` nhận số nguyên 1–5 (mặc định 1). Explorer chỉ mở liên kết trang cùng origin qua GET; không click, fill, submit form, mở trang có query string, hoặc đi vào các đường dẫn thanh toán/đặt hàng/đăng xuất/xóa. Mỗi trang hợp lệ có một plan riêng trong `output/.../pages/page-N.plan.json`; `plan.json` ở gốc là plan của trang đầu tiên. **Chưa tự ghép các trang thành một video liên trang**: muốn replay tác vụ xuyên trang, người dùng cần viết và duyệt từng bước `navigate` trong task plan. Một link GET vẫn có thể gây thay đổi trên website thiết kế không đúng chuẩn, vì vậy chỉ khám phá URL tin cậy; screenshot có thể chứa dữ liệu riêng tư.
+`--max-pages` nhận số nguyên 1–5 (mặc định 1). Explorer chỉ mở liên kết trang cùng origin qua GET; không click, fill, submit form, mở trang có query string, hoặc đi vào các đường dẫn thanh toán/đặt hàng/đăng xuất/xóa. Mỗi trang hợp lệ có một plan riêng trong `output/.../pages/page-N.plan.json`; `plan.json` ở gốc là plan của trang đầu tiên. Có thể ghép các page plan thành một video liên trang bằng lệnh `assemble` bên dưới. Mỗi bước `navigate` được tạo ở trạng thái chưa duyệt; phải kiểm tra URL và đặt `reviewed: true` trước khi preview/render. Một link GET vẫn có thể gây thay đổi trên website thiết kế không đúng chuẩn, vì vậy chỉ khám phá URL tin cậy; screenshot có thể chứa dữ liệu riêng tư.
 
 Nếu trang không có heading/control, kiểm tra `discovery-report.json` và `discovery-page-1.png` trước khi thử website khác. `https://example.com` không được coi là fixture kiểm thử ổn định.
+
+
+## Workflow có điều kiện
+
+Plan hỗ trợ bước `branch` với điều kiện phần tử `visible` hoặc `hidden`, hai đích `onTrue` / `onFalse`, và trường `next` để hội tụ hai nhánh. Mọi cạnh workflow phải đi về phía trước; vòng lặp và bước không thể tới bị từ chối để tránh kịch bản chạy vô hạn hoặc chứa bước chết.
+
+```json
+{
+  "id": "check-cart",
+  "title": "Kiểm tra giỏ hàng",
+  "description": "Giỏ hàng có xuất hiện sau khi chọn gói không?",
+  "action": "branch",
+  "condition": { "target": { "css": "#cart-title" }, "state": "visible" },
+  "onTrue": "cart-opened",
+  "onFalse": "cart-missing"
+}
+```
+
+## Ghép video nhiều trang
+
+```bash
+npm run tutorial -- discover https://driverjs.com --max-pages 3 --out output/site-discovery
+npm run tutorial -- assemble output/site-discovery --out output/site-guide
+# Mở output/site-guide/plan.json và kiểm tra từng URL navigate.
+# Chỉ đặt reviewed: true sau khi đã duyệt từng bước navigate.
+npm run tutorial -- validate output/site-guide/plan.json
+npm run tutorial -- preview output/site-guide/plan.json --out output/site-preview
+npm run tutorial -- render output/site-guide/plan.json --out output/site-video
+```
+
+Lệnh `assemble` tạo một plan dùng cùng browser page và cùng recording session, nên các trang được nối vào một MP4. Chỉ page cùng origin từ báo cáo discovery thành công mới được đưa vào. Đây vẫn là read-only page navigation; không tự click link hoặc submit form trong lúc khám phá.

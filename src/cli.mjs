@@ -4,8 +4,9 @@ import { parseArgs } from 'node:util';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { explore } from './discover.mjs';
+import { assembleDiscovery } from './assemble.mjs';
 import { render } from './render.mjs';
-import { Plan } from './plan.mjs';
+import { Plan, validatePlanForExecution } from './plan.mjs';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   out: { type: 'string' }, headed: { type: 'boolean', default: false }, language: { type: 'string', default: 'vi' },
@@ -25,15 +26,29 @@ try {
       for (const [i, pagePlan] of plans.entries()) {
         await writeFile(path.join(pagesDir, 'page-' + (i + 1) + '.plan.json'), JSON.stringify(pagePlan, null, 2));
       }
-      console.log('Found ' + plans.length + ' page plans in ' + pagesDir + '. Each is rendered separately; cross-page replay needs an explicitly reviewed task plan.');
+      console.log('Found ' + plans.length + ' page plans. Run "assemble ' + outDir + '" to create one continuous multi-page plan.');
     }
     console.log('Discovery evidence: ' + path.join(outDir, 'discovery-report.json'));
     console.log('Plan: ' + outDir + '/plan.json (overview; no automatic clicks)');
     if (action === 'run') console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
+  } else if (action === 'assemble') {
+    const plan = await assembleDiscovery(input);
+    await mkdir(outDir, { recursive: true });
+    await writeFile(path.join(outDir, 'plan.json'), JSON.stringify(plan, null, 2));
+    const reviewIssues = validatePlanForExecution(plan);
+    console.log('Assembled ' + plan.steps.length + ' steps into ' + path.join(outDir, 'plan.json'));
+    console.log('Review required before preview/render:');
+    for (const issue of reviewIssues) console.log('- ' + issue);
+    console.log('Set reviewed: true only after checking each navigation URL and its effect.');
   } else if (['render', 'preview', 'validate'].includes(action)) {
     const plan = Plan.parse(JSON.parse(await readFile(input, 'utf8')));
-    if (action === 'validate') console.log('Valid plan: ' + plan.steps.length + ' steps');
-    else console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed, preview: action === 'preview' }), null, 2));
+    if (action === 'validate') {
+      const issues = validatePlanForExecution(plan);
+      if (issues.length) throw new Error('Plan is structurally valid but not ready to execute:\n- ' + issues.join('\n- '));
+      console.log('Valid and reviewed plan: ' + plan.steps.length + ' steps');
+    } else {
+      console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed, preview: action === 'preview' }), null, 2));
+    }
   } else if (action === 'demo') {
     const html = await readFile(new URL('../examples/demo.html', import.meta.url));
     const server = createServer((_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(html); });
@@ -46,7 +61,7 @@ try {
       console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
     } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   } else {
-    console.log('Commands: discover <url> | run <url> | validate <plan.json> | preview <plan.json> | render <plan.json> | demo\nOptions: --out output/name --headed --language vi|en --max-pages 1..5');
+    console.log('Commands: discover <url> | assemble <discovery-dir> | run <url> | validate <plan.json> | preview <plan.json> | render <plan.json> | demo\nOptions: --out output/name --headed --language vi|en --max-pages 1..5');
     if (action) process.exitCode = 1;
   }
 } catch (error) { console.error(error.message); process.exitCode = 1; }

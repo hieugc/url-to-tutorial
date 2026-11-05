@@ -38,3 +38,15 @@ Kiểm tra `output/e2e-demo/tutorial.mp4` bằng mắt: tiếng Việt đúng d�
 
 Repository do chủ dự án tạo: https://github.com/hieugc/url-to-tutorial (public).
 Mã nguồn không bao gồm node_modules, output chứa dữ liệu website, session đăng nhập, token hoặc binary bên thứ ba.
+
+
+## Conditional workflow + continuous multi-page video — CI PASS
+
+- Workflow run: https://github.com/hieugc/url-to-tutorial/actions/runs/42030003927
+- Commit tested: `e442d92bb5802e9ceb5c574ada0d4884c82c5f35`.
+- Unit tests: **7/7 PASS**. E2E: **PASS** on GitHub Actions Chromium.
+- E2E exercised both IF/ELSE outcomes, the unreviewed-action execution gate, and discovery/assembly/render across two same-origin pages.
+- Continuous multi-page output: **H.264, 1280×720, 54.64 seconds, no audio**. Demo output: **H.264, 1280×720, 25.64 seconds, no audio**.
+- Branch evidence: visible condition selected `cart-found`; missing element selected `cart-missing`.
+- [Artifact tutorial-evidence](https://github.com/hieugc/url-to-tutorial/actions/runs/42030003927/artifacts/13415996726) contains screenshots, reports and MP4 files; retention 7 days, expires 2026-11-12.
+- This is runtime verification on the GitHub runner. It is not yet a manual visual review of the complete MP4, MacBook M3 verification, or a Hostinger production-site test.

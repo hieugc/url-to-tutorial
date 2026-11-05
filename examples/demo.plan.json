@@ -4,11 +4,88 @@
   "url": "http://127.0.0.1:4173",
   "language": "vi",
   "mode": "task",
-  "viewport": { "width": 1280, "height": 720 },
+  "viewport": {
+    "width": 1280,
+    "height": 720
+  },
   "steps": [
-    { "id": "intro", "title": "Bắt đầu từ nhu cầu của bạn", "description": "Xác định loại website trước khi chọn gói hosting.", "target": { "css": "#hero" }, "holdMs": 2500 },
-    { "id": "compare", "title": "So sánh các gói", "description": "Kiểm tra tài nguyên, giới hạn website và giá gia hạn. Đây là dữ liệu minh họa.", "target": { "css": "#plans" }, "holdMs": 3000 },
-    { "id": "choose", "title": "Chọn gói phù hợp", "description": "Nhấn Chọn Premium để mở phần kiểm tra gói trong demo.", "target": { "role": "button", "name": "Chọn Premium" }, "action": "click", "reviewed": true, "expected": { "css": "#cart-title" }, "holdMs": 2500 },
-    { "id": "stop", "title": "Kiểm tra trước khi thanh toán", "description": "Xem lại kỳ hạn và điều kiện. Video hướng dẫn kết thúc ở đây; không thực hiện thanh toán.", "target": { "css": "#cart" }, "action": "stop", "holdMs": 3500 }
+    {
+      "id": "intro",
+      "title": "Bắt đầu từ nhu cầu của bạn",
+      "description": "Xác định loại website trước khi chọn gói hosting.",
+      "target": {
+        "css": "#hero"
+      },
+      "holdMs": 2500
+    },
+    {
+      "id": "compare",
+      "title": "So sánh các gói",
+      "description": "Kiểm tra tài nguyên, giới hạn website và giá gia hạn. Đây là dữ liệu minh họa.",
+      "target": {
+        "css": "#plans"
+      },
+      "holdMs": 3000
+    },
+    {
+      "id": "choose",
+      "title": "Chọn gói phù hợp",
+      "description": "Nhấn Chọn Premium để mở phần kiểm tra gói trong demo.",
+      "target": {
+        "role": "button",
+        "name": "Chọn Premium"
+      },
+      "action": "click",
+      "reviewed": true,
+      "expected": {
+        "css": "#cart-title"
+      },
+      "holdMs": 2500
+    },
+    {
+      "id": "check-cart",
+      "title": "Kiểm tra giỏ hàng",
+      "description": "Giỏ hàng có xuất hiện sau khi chọn gói không?",
+      "action": "branch",
+      "condition": {
+        "target": {
+          "css": "#cart-title"
+        },
+        "state": "visible"
+      },
+      "onTrue": "cart-opened",
+      "onFalse": "cart-missing",
+      "holdMs": 1200
+    },
+    {
+      "id": "cart-opened",
+      "title": "Giỏ hàng đã mở",
+      "description": "Đã tìm thấy giỏ hàng. Kiểm tra kỳ hạn và giá trước khi tiếp tục.",
+      "target": {
+        "css": "#cart"
+      },
+      "next": "stop",
+      "holdMs": 2200
+    },
+    {
+      "id": "cart-missing",
+      "title": "Chưa mở được giỏ hàng",
+      "description": "Không tìm thấy giỏ hàng sau thao tác. Hãy quay lại kiểm tra gói đã chọn.",
+      "target": {
+        "css": "#plans"
+      },
+      "next": "stop",
+      "holdMs": 2200
+    },
+    {
+      "id": "stop",
+      "title": "Dừng trước thanh toán",
+      "description": "Video hướng dẫn kết thúc tại đây. Không thực hiện thanh toán.",
+      "target": {
+        "css": "#cart"
+      },
+      "action": "stop",
+      "holdMs": 3000
+    }
   ]
 }
