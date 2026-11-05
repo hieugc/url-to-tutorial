@@ -62,3 +62,10 @@ Manifest v1 trong code là nguồn sự thật của CLI. Editor phải tạo ve
 Không hardcode giá hoặc selector từ trí nhớ. Tạo template từ DOM hiện hành, có evidence từng bước: landing → bảng gói → chọn gói → kiểm tra giỏ → stop trước thanh toán. Bước tài khoản chỉ dùng trạng thái demo/đã che dữ liệu; không cho video chứa mật khẩu/thẻ. Với site cấm overlay/CSP, báo cần adapter/recording thủ công, không hứa chạy mọi website.
 
 MacBook M3 16 GB phù hợp để bắt đầu với 1 Chromium worker, 720p hoặc 1080p và FFmpeg local; chưa có benchmark trên máy người dùng. Giới hạn concurrency = 1 trước, đo RSS/CPU/thời gian render rồi tăng. Chưa cần GPU local hay Docker. Cloud multi-user phải chặn private/metadata IP qua egress policy (kể cả redirect/DNS rebinding/subresource), cách ly browser và credentials, có auth/rate limits/retention trước khi mở URL tùy ý.
+
+
+## Workflow engine V2
+
+- Control flow: `branch` evaluates a visible/hidden locator and selects `onTrue` or `onFalse`; `next` joins paths. Edges are forward-only, every step must be reachable, and render has a step-count guard.
+- Review gate: plans may contain draft click/fill/navigate actions, but validate, preview, and render reject them until `reviewed: true` is explicitly set.
+- Multi-page: read-only discovery plans can be assembled into one task plan. Reviewed same-origin `navigate` steps reuse the same page and video recording session. New tabs/popups remain unsupported and fail explicitly.
