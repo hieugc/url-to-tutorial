@@ -17,7 +17,7 @@ npm run demo
 npm run tutorial -- run https://driverjs.com --out output/driver-overview
 
 # Tách lập kịch bản và render
-npm run tutorial -- discover https://example.com --out output/my-guide
+npm run tutorial -- discover https://driverjs.com --out output/my-guide
 # Sửa output/my-guide/plan.json: tiêu đề, lời hướng dẫn, selector, thời gian, thứ tự.
 npm run tutorial -- validate output/my-guide/plan.json
 npm run tutorial -- preview output/my-guide/plan.json --out output/preview-01
@@ -26,7 +26,7 @@ npm run tutorial -- render output/my-guide/plan.json --out output/render-01
 
 `--headed` mở cửa sổ trình duyệt. `preview` chạy có giao diện nhưng không encode video. `CHROMIUM_PATH` chỉ định Chromium đã cài sẵn khi cần; vẫn cần FFmpeg recorder của Playwright (`npx playwright install ffmpeg`).
 
-Mỗi lần chạy nên dùng thư mục output mới. Kết quả: `tutorial.mp4`, `report.json`, ảnh `step-N.png`, bản ghi WebM trong `raw/`. Lệnh `discover` và `run` còn xuất `plan.json`. Video MVP không có âm thanh. Ảnh/video ghi nội dung đang hiển thị: chỉ dùng dữ liệu demo nếu sẽ chia sẻ.
+Mỗi lần chạy nên dùng thư mục output mới. Kết quả: `tutorial.mp4`, `report.json`, ảnh `step-N.png`, bản ghi WebM trong `raw/`. Lệnh `discover` và `run` còn xuất `plan.json` và `discovery-report.json` (HTTP status, URL cuối, title, số lượng phần tử, selectors, ảnh `discovery-page-N.png`). Nếu không tìm thấy phần tử, báo lỗi nhưng vẫn lưu evidence để chẩn đoán. Video MVP không có âm thanh. Ảnh/video ghi nội dung đang hiển thị: chỉ dùng dữ liệu demo nếu sẽ chia sẻ.
 
 ## Hai chế độ
 
@@ -84,3 +84,13 @@ E2E khởi chạy website fixture cục bộ, kiểm tra URL discovery → rende
 - CLI được chạy trên máy cá nhân với URL do người vận hành tin cậy. Không expose CLI thành dịch vụ công khai nhận URL tùy ý; cloud worker cần cách ly mạng/SSRF/credentials trước.
 
 Xem [kiến trúc và API dự kiến](docs/ARCHITECTURE.md), [đánh giá repo có sẵn](docs/REUSE.md), [backlog](docs/BACKLOG.md) và [kết quả kiểm tra](docs/VALIDATION.md).
+
+## Khám phá nhiều trang — bản read-only
+
+```bash
+npm run tutorial -- discover https://driverjs.com --max-pages 3 --out output/driver-multipage
+```
+
+`--max-pages` nhận số nguyên 1–5 (mặc định 1). Explorer chỉ mở liên kết trang cùng origin qua GET; không click, fill, submit form, mở trang có query string, hoặc đi vào các đường dẫn thanh toán/đặt hàng/đăng xuất/xóa. Mỗi trang hợp lệ có một plan riêng trong `output/.../pages/page-N.plan.json`; `plan.json` ở gốc là plan của trang đầu tiên. **Chưa tự ghép các trang thành một video liên trang**: muốn replay tác vụ xuyên trang, người dùng cần viết và duyệt từng bước `navigate` trong task plan. Một link GET vẫn có thể gây thay đổi trên website thiết kế không đúng chuẩn, vì vậy chỉ khám phá URL tin cậy; screenshot có thể chứa dữ liệu riêng tư.
+
+Nếu trang không có heading/control, kiểm tra `discovery-report.json` và `discovery-page-1.png` trước khi thử website khác. `https://example.com` không được coi là fixture kiểm thử ổn định.
