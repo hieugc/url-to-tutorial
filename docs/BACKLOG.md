@@ -5,7 +5,8 @@
 | UTV-001 | CLI core + Driver.js + MP4 | Fixture URL → plan → video H.264, ảnh các bước, báo lỗi selector | Implemented; xem VALIDATION.md |
 | UTV-002 | Hostinger adapter | Chạy trên site thật, ghi DOM evidence, không bấm thanh toán, duyệt video | Chưa làm |
 | UTV-010 | Discovery evidence + multi-page read-only | Status HTTP, screenshot, plan riêng mỗi trang, giới hạn và an toàn điều hướng | CI PASS; local QA pending |
-| UTV-011 | Conditional workflow + multi-page assembly | IF/ELSE visible/hidden, forward-only graph, review gate, one continuous MP4 | Implemented; CI pending |\n| UTV-003 | Studio editor | Nhập URL, sửa/reorder steps, preview, download MP4 | Chưa làm |
+| UTV-011 | Conditional workflow + multi-page assembly | IF/ELSE visible/hidden, forward-only graph, review gate, one continuous MP4 | CI PASS; local QA pending |
+| UTV-003 | Studio editor | Nhập URL, sửa/reorder steps, preview, download MP4 | Chưa làm |
 | UTV-004 | AI planner có mục tiêu | JSON grounded trong observed DOM; phát hiện task không đủ dữ liệu | Chưa làm |
 | UTV-005 | TTS VI/EN + SRT | Audio không bị cắt, không lệch cảnh; kiểm tra bằng video thật | Chưa làm |
 | UTV-006 | Spike webreel | Driver.js qua navigation, cursor mượt, so sánh video với V1 | Chưa làm |
