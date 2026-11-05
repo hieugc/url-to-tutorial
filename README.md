@@ -32,7 +32,7 @@ Mỗi lần chạy nên dùng thư mục output mới. Kết quả: `tutorial.mp
 
 | Chế độ | Hiện có | Giới hạn |
 |---|---|---|
-| Overview — chỉ nhập URL | Tìm tối đa 8 tiêu đề/nút/link đang hiển thị, sinh kịch bản spotlight, xuất MP4 | Lời hướng dẫn theo mẫu; không hiểu mục tiêu nghiệp vụ; không tự khám phá nhiều trang |
+| Overview — chỉ nhập URL | Tìm tối đa 8 tiêu đề/nút/link trên trang đầu, sinh kịch bản spotlight, xuất MP4 | Lời hướng dẫn theo mẫu; chưa hiểu mục tiêu nghiệp vụ; nhiều trang cần discover --max-pages rồi assemble |
 | Task — URL + kịch bản | Highlight, click, fill, navigate, IF/ELSE branch, next/jump và kiểm tra phần tử kỳ vọng | Bạn viết/sửa JSON; click/fill/navigate phải được duyệt; chưa tự sinh workflow bằng AI |
 
 Ví dụ một bước thao tác:
