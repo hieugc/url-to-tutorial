@@ -18,9 +18,53 @@ export async function installOverlay(page) {
   });
 }
 
+async function showFrameStep(page, locator, step, index, total) {
+  await locator.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  await page.waitForTimeout(650);
+  const box = await locator.boundingBox();
+  if (!box) throw new Error('Iframe target has no visible bounding box');
+  const title = (index + 1) + '/' + total + ' · ' + step.title;
+  await page.evaluate(async ({ box, title, description }) => {
+    const cursor = document.querySelector('#tutorial-cursor');
+    if (cursor) {
+      const from = cursor.getBoundingClientRect();
+      await cursor.animate([
+        { left: from.x + 'px', top: from.y + 'px' },
+        { left: (box.x + Math.min(box.width / 2, 100)) + 'px',
+          top: (box.y + box.height / 2) + 'px' },
+      ], { duration: 650, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards' }).finished;
+    }
+    document.querySelector('#tutorial-frame-overlay')?.remove();
+    const root = document.createElement('div');
+    root.id = 'tutorial-frame-overlay';
+    root.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none;';
+    const outline = document.createElement('div');
+    outline.style.cssText = 'position:fixed;box-sizing:border-box;border:3px solid #16a085;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.42),0 0 0 6px rgba(22,160,133,.18);';
+    outline.style.left = box.x + 'px';
+    outline.style.top = box.y + 'px';
+    outline.style.width = box.width + 'px';
+    outline.style.height = box.height + 'px';
+    const popover = document.createElement('div');
+    popover.style.cssText = 'position:fixed;box-sizing:border-box;width:min(360px,calc(100vw - 24px));max-height:140px;overflow:hidden;background:#fff;color:#10243a;border-radius:14px;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,.24);font:16px/1.5 Arial,sans-serif;';
+    popover.style.left = Math.max(12, Math.min(box.x, innerWidth - 372)) + 'px';
+    popover.style.top = Math.max(12, Math.min(box.y + box.height + 12, innerHeight - 152)) + 'px';
+    const heading = document.createElement('strong');
+    heading.textContent = title;
+    heading.style.cssText = 'display:block;font-size:18px;line-height:1.35;margin-bottom:8px;';
+    const body = document.createElement('div');
+    body.textContent = description;
+    body.style.cssText = 'font-size:14px;line-height:1.5;';
+    popover.append(heading, body);
+    root.append(outline, popover);
+    document.body.append(root);
+  }, { box, title, description: step.description });
+}
+
 export async function showStep(page, locator, step, index, total, onVisible = undefined) {
   await installOverlay(page);
-  if (locator) {
+  if (locator && step.target?.frame) {
+    await showFrameStep(page, locator, step, index, total);
+  } else if (locator) {
     await locator.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
     // Explicit presentation pacing, not a replacement for element readiness.
     await page.waitForTimeout(650);
@@ -45,6 +89,9 @@ export async function showStep(page, locator, step, index, total, onVisible = un
 }
 
 export async function hideStep(page) {
-  await page.evaluate(() => window.__tutorialDriver?.destroy());
+  await page.evaluate(() => {
+    document.querySelector('#tutorial-frame-overlay')?.remove();
+    window.__tutorialDriver?.destroy();
+  });
   await page.waitForTimeout(450);
 }

@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const state = { plan: null, selected: 0, discoveryJobId: null, pages: 0, ready: false, busy: false };
+const state = { plan: null, selected: 0, discoveryJobId: null, pages: 0, ready: false, busy: false, activeJobId: null };
 const ACTIONS = new Set(['click', 'fill', 'navigate']);
 const toastEl = $('toast');
 let toastTimeout;
@@ -322,18 +322,55 @@ function showJob(title, detail) {
   $('download').hidden = true;
   $('srt-download').hidden = true;
   $('vtt-download').hidden = true;
+  $('cancel-job').hidden = !state.activeJobId;
 }
 async function awaitJob(jobId, title) {
-  for (let attempt = 0; attempt < 480; attempt++) {
-    const result = await api('/api/jobs/' + encodeURIComponent(jobId));
-    const done = result.report?.steps?.filter(step => step.status === 'completed').length || 0;
-    showJob(title + ' · ' + result.status, result.status === 'running' ?
-      (done ? done + ' completed steps' : 'Opening Chromium / preparing output') : 'Job ' + jobId);
-    if (result.status === 'failed') throw new Error(result.error || 'Job failed');
-    if (result.status === 'completed') return result;
-    await new Promise(resolve => setTimeout(resolve, 750));
+  state.activeJobId = jobId;
+  $('cancel-job').hidden = false;
+  $('cancel-job').disabled = false;
+  let terminal = false;
+  try {
+    for (let attempt = 0; attempt < 480; attempt++) {
+      const result = await api('/api/jobs/' + encodeURIComponent(jobId));
+      const done = result.report?.steps?.filter(step => step.status === 'completed').length || 0;
+      const status = result.cancelRequested ? 'cancelling' : result.status;
+      showJob(title + ' · ' + status, status === 'running' || status === 'cancelling' ?
+        (done ? done + ' completed steps' : 'Opening Chromium / preparing output') : 'Job ' + jobId);
+      if (result.status === 'failed') {
+        terminal = true;
+        throw new Error(result.error || 'Job failed');
+      }
+      if (result.status === 'cancelled') {
+        terminal = true;
+        throw new Error(result.error || 'Job cancelled');
+      }
+      if (result.status === 'completed') {
+        terminal = true;
+        return result;
+      }
+      await new Promise(resolve => setTimeout(resolve, 750));
+    }
+    throw new Error('UI polling expired. The backend job may still be running.');
+  } finally {
+    if (terminal) {
+      state.activeJobId = null;
+      $('cancel-job').hidden = true;
+      $('cancel-job').disabled = false;
+    }
   }
-  throw new Error('UI polling expired. The backend job may still be running.');
+}
+async function cancelActiveJob() {
+  const id = state.activeJobId;
+  if (!id) return;
+  $('cancel-job').disabled = true;
+  try {
+    const result = await api('/api/jobs/' + encodeURIComponent(id) + '/cancel', {});
+    showJob('Job · ' + result.status, 'Cancellation requested. Waiting for browser and FFmpeg to stop safely.');
+    toast(result.status === 'cancelling' ? 'Cancellation requested' : 'Queued job cancelled');
+  } catch (error) {
+    $('cancel-job').disabled = false;
+    toast(error.message, true);
+  }
 }
 
 async function discover(event) {
@@ -487,6 +524,7 @@ $('add').addEventListener('click', addStep);
 $('validate').addEventListener('click', validate);
 $('preview').addEventListener('click', () => execute('preview'));
 $('render').addEventListener('click', () => execute('render'));
+$('cancel-job').addEventListener('click', cancelActiveJob);
 $('assemble').addEventListener('click', assemble);
 $('plan-title').addEventListener('change', event => {
   if (!state.plan) return;

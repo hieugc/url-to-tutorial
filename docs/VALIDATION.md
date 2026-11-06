@@ -112,3 +112,22 @@ This batch is **not VERIFIED until a single full GitHub Actions run reaches SUCC
 **Still OPEN even after CI:** manual MacBook visual/audio QA (listening to both VI/EN outputs), real Webreel capture, graceful in-flight browser cancellation, real authenticated session consent/iframe handling, production cloud security validation. Do not mark those requirements DONE from fixture tests alone.
 
 Unit tests: `npm test`. Browser tests: `npm run test:e2e`, `npm run test:studio:e2e`, `npm run test:hostinger:e2e`, `npm run test:goal:e2e`, `npm run test:narration:e2e`, `npm run test:privacy:e2e`. Baseline analysis: `npm run benchmark -- output/e2e-demo/tutorial.mp4`.
+
+
+## Follow-up regression — remaining task implementation (2026-11-06)
+
+The follow-up branch adds the following acceptance checks before merge:
+
+- npm test: cancellation of child processes, real Chromium cancellation, idempotency-key deduplication/conflict, iframe target schema and prior unit tests.
+- xvfb-run -a npm run test:iframe-session:e2e: cross-origin iframe spotlight, OTP/MFA detection inside iframe, manual login state transferred only in memory, and no storage-state file output.
+- npm run test:discovery-public:e2e: controlled same-origin multi-page traversal, HTTP status/screenshot/selector evidence, zero form submissions, blocked external main-frame redirects, plus public https://example.com.
+- npm run test:webreel:e2e: real Webreel v0.1.4 capture and Playwright capture on the same fixture, FFprobe comparison and artifacts under output/webreel-ab/.
+- The GitHub Actions workflow includes an independent macOS runner for platform compatibility. It is not the user's M3 hardware. The manual headed-login test is run on Linux under Xvfb; macOS CI skips only that headed test.
+
+Remaining acceptance that cannot be certified by GitHub CI alone:
+- Human review of MP4/voice/subtitle sync and visual transitions on the user's M3 MacBook.
+- Actual MacBook CPU/RAM benchmark and Apple Silicon Webreel compatibility.
+- Live billable OpenAI model run requiring a user-supplied API key.
+- Cloud API production deployment, tenant credentials, isolated worker egress, independent SSRF/security review and billing configuration.
+
+Do not close the affected issues until the human/production gates are supplied.

@@ -21,6 +21,7 @@ export class StudioJobStore {
   save(job) {
     const snapshot = { ...job };
     delete snapshot.abortController;
+    delete snapshot._deduplicated;
     const now = new Date().toISOString();
     this.put.run(snapshot.id, snapshot.createdAt || now, now, JSON.stringify(snapshot));
   }

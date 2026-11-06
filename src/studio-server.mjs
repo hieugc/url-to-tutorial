@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { createReadStream, rmSync } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { explore } from './discover.mjs';
@@ -74,6 +74,25 @@ function checkPlan(input) {
   return { plan: parsed.data, valid: true, ready: reviewIssues.length === 0, errors: [], reviewIssues };
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(key =>
+      JSON.stringify(key) + ':' + stableJson(value[key])).join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
+
+function idempotencyKey(req) {
+  const raw = req.headers['idempotency-key'];
+  if (raw === undefined) return null;
+  const key = String(raw).trim();
+  if (key.length < 8 || key.length > 128 || !/^[a-zA-Z0-9._:-]+$/.test(key)) {
+    throw bad('Idempotency-Key must be 8–128 characters (letters, numbers, . _ : -)', 400);
+  }
+  return key;
+}
+
 function publicReport(report) {
   if (!report) return null;
   const copy = structuredClone(report);
@@ -106,7 +125,20 @@ export function createStudioServer({
   }
   let queue = Promise.resolve();
 
-  function start(type, work, requestSnapshot = null) {
+  function start(type, work, requestSnapshot = null, key = null) {
+    const requestHash = createHash('sha256')
+      .update(type + '\n' + stableJson(requestSnapshot))
+      .digest('hex');
+    if (key) {
+      const existing = [...jobs.values()].find(job => job.idempotencyKey === key);
+      if (existing) {
+        if (existing.requestHash !== requestHash) {
+          throw bad('Idempotency-Key was already used with a different request', 409);
+        }
+        existing._deduplicated = true;
+        return existing;
+      }
+    }
     const pending = [...jobs.values()].filter(job => ['queued', 'running'].includes(job.status)).length;
     if (pending >= MAX_PENDING) throw bad('Job queue is full (4 pending jobs)', 429);
     const id = randomUUID();
@@ -117,7 +149,9 @@ export function createStudioServer({
     }
     const job = { id, type, status: 'queued', createdAt: new Date().toISOString(),
       outputDir: path.join(path.resolve(outputRoot), id), startedAt: null,
-      finishedAt: null, result: null, error: null, request };
+      finishedAt: null, result: null, error: null, request,
+      idempotencyKey: key, requestHash, cancelRequested: false,
+      abortController: new AbortController() };
     store.save(job);
     jobs.set(id, job);
     for (const [key, old] of jobs) {
@@ -131,11 +165,17 @@ export function createStudioServer({
       store.save(job);
       try {
         await mkdir(job.outputDir, { recursive: true });
-        job.result = await work(job);
-        job.status = 'completed';
+        job.result = await work(job, job.abortController.signal);
+        if (job.abortController.signal.aborted) {
+          job.status = 'cancelled';
+          job.error = 'Cancelled by operator';
+        } else {
+          job.status = 'completed';
+        }
       } catch (error) {
-        job.error = error.message || 'Job failed';
-        job.status = 'failed';
+        const cancelled = job.abortController.signal.aborted || error.name === 'AbortError';
+        job.error = cancelled ? 'Cancelled by operator' : (error.message || 'Job failed');
+        job.status = cancelled ? 'cancelled' : 'failed';
       } finally {
         job.finishedAt = new Date().toISOString();
         store.save(job);
@@ -167,7 +207,7 @@ export function createStudioServer({
         return json(res, 200, {
           jobs: [...jobs.values()].slice(-40).reverse().map(job => ({
             id: job.id, type: job.type, status: job.status, createdAt: job.createdAt,
-            finishedAt: job.finishedAt, error: job.error,
+            finishedAt: job.finishedAt, error: job.error, cancelRequested: job.cancelRequested === true,
           })),
         });
       }
@@ -183,6 +223,7 @@ export function createStudioServer({
         }
         const data = { id: job.id, type: job.type, status: job.status,
           startedAt: job.startedAt, finishedAt: job.finishedAt, error: job.error,
+          cancelRequested: job.cancelRequested === true,
           report: publicReport(report) };
         if (job.status === 'completed' && job.type === 'discover') {
           data.discovery = { plan: job.result.plan, plans: job.result.plans, report: job.result.report };
@@ -287,18 +328,27 @@ export function createStudioServer({
 
       if (req.method !== 'POST') return json(res, 404, { error: 'Unknown route' });
       const body = await bodyJson(req);
+      const requestKey = idempotencyKey(req);
 
       const cancelMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/cancel$/i);
       if (cancelMatch) {
         const job = jobs.get(cancelMatch[1]);
         if (!job) return json(res, 404, { error: 'Unknown job' });
-        if (job.status !== 'queued') {
-          return json(res, 409, { error: 'Only queued jobs can be cancelled safely; running browser actions cannot be interrupted blindly' });
+        if (job.status === 'queued') {
+          job.abortController?.abort();
+          job.status = 'cancelled';
+          job.error = 'Cancelled before execution';
+          job.finishedAt = new Date().toISOString();
+          store.save(job);
+          return json(res, 200, { id: job.id, status: job.status });
         }
-        job.status = 'cancelled';
-        job.finishedAt = new Date().toISOString();
-        store.save(job);
-        return json(res, 200, { id: job.id, status: job.status });
+        if (job.status === 'running' && ['render', 'preview', 'discover', 'goal', 'hostinger'].includes(job.type)) {
+          job.cancelRequested = true;
+          job.abortController?.abort();
+          store.save(job);
+          return json(res, 202, { id: job.id, status: 'cancelling' });
+        }
+        return json(res, 409, { error: 'This job type cannot yet be cooperatively cancelled while running' });
       }
 
       const retryMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/retry$/i);
@@ -313,18 +363,21 @@ export function createStudioServer({
             (source.type === 'goal' && request.ai)) {
           return json(res, 409, { error: 'Retry is disabled for browser actions, paid AI calls and unknown job inputs' });
         }
-        const job = start(source.type, current => {
+        const job = start(source.type, (current, signal) => {
           if (source.type === 'discover') return exploreImpl(request.url, {
-            outDir: current.outputDir, maxPages: request.maxPages, language: request.language,
+            outDir: current.outputDir, maxPages: request.maxPages, language: request.language, signal,
           });
           if (source.type === 'hostinger') return hostingerImpl(request.url, {
-            outDir: current.outputDir, language: request.language,
+            outDir: current.outputDir, language: request.language, signal,
           });
           return goalImpl(request.url, {
-            outDir: current.outputDir, goal: request.goal, ai: false, language: request.language,
+            outDir: current.outputDir, goal: request.goal, ai: false, language: request.language, signal,
           });
-        }, request);
-        return json(res, 202, { jobId: job.id, status: job.status, retriedFrom: source.id });
+        }, request, requestKey);
+        return json(res, job._deduplicated ? 200 : 202, {
+          jobId: job.id, status: job.status, retriedFrom: source.id,
+          deduplicated: job._deduplicated === true,
+        });
       }
 
       if (pathname === '/api/validate') {
@@ -341,10 +394,12 @@ export function createStudioServer({
         if (!url.success || goal.length < 4 || goal.length > 400 || !['vi', 'en'].includes(language)) {
           return json(res, 422, { error: 'Valid URL, specific goal (4–400 characters), and language vi/en required' });
         }
-        const job = start('goal', current => goalImpl(url.data, {
-          goal, ai, language, outDir: current.outputDir,
-        }), { url: url.data, goal, ai, language });
-        return json(res, 202, { jobId: job.id, status: job.status });
+        const job = start('goal', (current, signal) => goalImpl(url.data, {
+          goal, ai, language, outDir: current.outputDir, signal,
+        }), { url: url.data, goal, ai, language }, requestKey);
+        return json(res, job._deduplicated ? 200 : 202, {
+          jobId: job.id, status: job.status, deduplicated: job._deduplicated === true,
+        });
       }
 
       if (pathname === '/api/hostinger') {
@@ -353,10 +408,12 @@ export function createStudioServer({
         catch (error) { return json(res, 422, { error: error.message }); }
         const language = body.language ?? 'vi';
         if (!['vi', 'en'].includes(language)) return json(res, 422, { error: 'language must be vi or en' });
-        const job = start('hostinger', current => hostingerImpl(url, {
-          outDir: current.outputDir, language,
-        }), { url, language });
-        return json(res, 202, { jobId: job.id, status: job.status });
+        const job = start('hostinger', (current, signal) => hostingerImpl(url, {
+          outDir: current.outputDir, language, signal,
+        }), { url, language }, requestKey);
+        return json(res, job._deduplicated ? 200 : 202, {
+          jobId: job.id, status: job.status, deduplicated: job._deduplicated === true,
+        });
       }
 
       if (pathname === '/api/discover') {
@@ -367,10 +424,12 @@ export function createStudioServer({
             !Number.isInteger(maxPages) || maxPages < 1 || maxPages > 5) {
           return json(res, 422, { error: 'Valid HTTP(S) URL, language vi/en and maxPages 1–5 required' });
         }
-        const job = start('discover', current => exploreImpl(url.data, {
-          outDir: current.outputDir, maxPages, language,
-        }), { url: url.data, maxPages, language });
-        return json(res, 202, { jobId: job.id, status: job.status });
+        const job = start('discover', (current, signal) => exploreImpl(url.data, {
+          outDir: current.outputDir, maxPages, language, signal,
+        }), { url: url.data, maxPages, language }, requestKey);
+        return json(res, job._deduplicated ? 200 : 202, {
+          jobId: job.id, status: job.status, deduplicated: job._deduplicated === true,
+        });
       }
 
       if (pathname === '/api/assemble') {
@@ -394,17 +453,36 @@ export function createStudioServer({
         const preview = pathname === '/api/preview';
         const narrate = body.narrate === true && !preview;
         const renderer = narrate ? renderNarrated : renderImpl;
-        const job = start(preview ? 'preview' : 'render', current =>
-          renderer(checked.plan, { outDir: current.outputDir, headed: preview, preview }),
-          { plan: checked.plan, narrate });
-        return json(res, 202, { jobId: job.id, status: job.status });
+        const job = start(preview ? 'preview' : 'render', (current, signal) =>
+          renderer(checked.plan, { outDir: current.outputDir, headed: preview, preview, signal }),
+          { plan: checked.plan, narrate }, requestKey);
+        return json(res, job._deduplicated ? 200 : 202, {
+          jobId: job.id, status: job.status, deduplicated: job._deduplicated === true,
+        });
       }
       return json(res, 404, { error: 'Unknown route' });
     } catch (error) {
       return json(res, error.statusCode || 500, { error: error.message || 'Server error' });
     }
   });
-  server.on('close', () => store.close());
+  server.once('close', () => {
+    for (const job of jobs.values()) {
+      if (job.status === 'queued') {
+        job.abortController?.abort();
+        job.status = 'cancelled';
+        job.error = 'Studio stopped before the job started';
+        job.finishedAt = new Date().toISOString();
+        store.save(job);
+      } else if (job.status === 'running') {
+        job.cancelRequested = true;
+        job.abortController?.abort();
+        store.save(job);
+      }
+    }
+    // Keep SQLite open until cooperative workers have unwound and persisted
+    // their terminal state. A hard process kill is recovered as interrupted.
+    queue.finally(() => store.close());
+  });
   return { server, jobs, store };
 }
 

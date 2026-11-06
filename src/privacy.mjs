@@ -67,27 +67,37 @@ export async function installPrivacy(context, selectors = []) {
 }
 
 export async function assertSafeCapture(page) {
-  const status = await page.evaluate(() => {
-    if (window.__tutorialPrivacyError) return { error: window.__tutorialPrivacyError };
-    const visible = el => {
-      if (!el) return false;
-      const style = getComputedStyle(el);
-      const rect = el.getBoundingClientRect();
-      return style.display !== 'none' &&
-        (style.visibility !== 'hidden' || el.hasAttribute('data-tutorial-redacted')) &&
-        rect.width > 0 && rect.height > 0;
-    };
-    const unsafe = [
-      'iframe[src*="recaptcha"]', 'iframe[title*="captcha" i]',
-      'input[autocomplete="one-time-code"]',
-      'input[name*="otp" i]', 'input[id*="otp" i]',
-    ];
-    for (const selector of unsafe) {
-      if ([...document.querySelectorAll(selector)].some(visible)) {
-        return { error: 'CAPTCHA/MFA/OTP challenge requires manual handling; automatic capture stopped' };
-      }
+  // Playwright can inspect cross-origin frames through its frame execution
+  // context. Check every attached frame so an MFA prompt inside an iframe
+  // cannot be missed by a top-document-only scan.
+  for (const frame of page.frames()) {
+    let status;
+    try {
+      status = await frame.evaluate(() => {
+        if (window.__tutorialPrivacyError) return { error: window.__tutorialPrivacyError };
+        const visible = el => {
+          if (!el) return false;
+          const style = getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' &&
+            rect.width > 0 && rect.height > 0;
+        };
+        const unsafe = [
+          'iframe[src*="recaptcha"]', 'iframe[title*="captcha" i]',
+          'input[autocomplete="one-time-code"]',
+          'input[name*="otp" i]', 'input[id*="otp" i]',
+        ];
+        for (const selector of unsafe) {
+          if ([...document.querySelectorAll(selector)].some(visible)) {
+            return { error: 'CAPTCHA/MFA/OTP challenge requires manual handling; automatic capture stopped' };
+          }
+        }
+        return { error: null };
+      });
+    } catch (error) {
+      if (frame.isDetached()) continue;
+      throw new Error('Could not verify privacy state in frame "' + frame.url() + '": ' + error.message);
     }
-    return { error: null };
-  });
-  if (status.error) throw new Error(status.error);
+    if (status?.error) throw new Error(status.error);
+  }
 }

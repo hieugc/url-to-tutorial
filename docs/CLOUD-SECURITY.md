@@ -4,6 +4,12 @@
 
 Current Studio is a local operator-controlled service bound to 127.0.0.1. There is **no** publicly exposed Cloud API, bearer authentication, billing, multi-tenant ACL or untrusted-user browser worker. The utility in src/cloud-egress.mjs is only a **DNS and URL preflight**, not an SSRF protection boundary. No release should claim UTV-009 DONE based on this file.
 
+## Local egress-proxy integration hook
+
+`src/browser.mjs` now honors `TUTORIAL_EGRESS_PROXY` when launching Chromium, using Playwright's browser proxy option. This is a connection point for a future worker deployment, **not an enforced network boundary by itself**. If the container has an unrestricted network route, a target page may still attempt non-browser or non-proxy egress.
+
+A deployment must attach the worker only to a private/internal network and give it a route to the internet solely through a separately managed egress proxy/firewall. The proxy must resolve and enforce destination IP policy at connection time, deny loopback/private/link-local/multicast/metadata destinations and unsafe ports, and be tested against redirect chains, DNS rebinding and iframe/subresource requests. No Cloud API is currently exposed and this hook is not production-ready.
+
 ## Target architecture
 
 Browser-facing API (authenticated tenant/project) → throttled job queue → single-use browser worker in isolated container/microVM → restricted outbound egress proxy → artifact store with tenant ACL and time-limited signed URLs → cleanup worker.

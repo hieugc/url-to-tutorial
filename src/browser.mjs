@@ -1,8 +1,13 @@
 import { chromium } from 'playwright';
 
 export async function launch(headed = false) {
-  return chromium.launch({ headless: !headed,
-    ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) });
+  return chromium.launch({
+    headless: !headed,
+    ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+    ...(process.env.TUTORIAL_EGRESS_PROXY
+      ? { proxy: { server: process.env.TUTORIAL_EGRESS_PROXY } }
+      : {}),
+  });
 }
 
 export async function ready(page) {

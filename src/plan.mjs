@@ -9,8 +9,13 @@ const Locator = z.union([
   z.object({ css: z.string().min(1) }).strict(),
   z.object({ role: z.enum(['heading', 'button', 'link', 'textbox', 'combobox']), name: z.string().min(1) }).strict(),
 ]);
-const BranchCondition = z.object({
+const FrameTarget = z.object({
+  frame: z.object({ css: z.string().min(1) }).strict(),
   target: Locator,
+}).strict();
+const Target = z.union([Locator, FrameTarget]);
+const BranchCondition = z.object({
+  target: Target,
   state: z.enum(['visible', 'hidden']).default('visible'),
 }).strict();
 
@@ -18,14 +23,14 @@ const Step = z.object({
   id: z.string().min(1),
   title: z.string().min(1).max(160),
   description: z.string().max(1200),
-  target: Locator.optional(),
+  target: Target.optional(),
   action: z.enum(['highlight', 'click', 'fill', 'navigate', 'branch', 'stop']).default('highlight'),
   value: z.string().max(2000).optional(),
   url: HttpUrl.optional(),
   holdMs: z.number().int().min(500).max(30000).default(3000),
   // Approval is checked at execution time so generated plans can remain drafts.
   reviewed: z.boolean().default(false),
-  expected: Locator.optional(),
+  expected: Target.optional(),
   condition: BranchCondition.optional(),
   onTrue: z.string().min(1).optional(),
   onFalse: z.string().min(1).optional(),
@@ -117,10 +122,21 @@ export function validatePlanForExecution(plan) {
 }
 
 export function locate(page, target) {
-  return target.css ? page.locator(target.css) : page.getByRole(target.role, { name: target.name, exact: true });
+  const root = target.frame ? page.frameLocator(target.frame.css) : page;
+  const locator = target.frame ? target.target : target;
+  return locator.css ? root.locator(locator.css) :
+    root.getByRole(locator.role, { name: locator.name, exact: true });
 }
 
 export async function uniqueTarget(page, target) {
+  if (target.frame) {
+    const frames = page.locator(target.frame.css);
+    const frameCount = await frames.count();
+    if (frameCount !== 1) {
+      throw new Error('Iframe selector must match exactly one frame (' + frameCount + ' matches): ' + target.frame.css);
+    }
+    if (!await frames.isVisible()) throw new Error('Target iframe is not visible: ' + target.frame.css);
+  }
   const locator = locate(page, target);
   await locator.first().waitFor({ state: 'visible', timeout: 10000 });
   const count = await locator.count();
