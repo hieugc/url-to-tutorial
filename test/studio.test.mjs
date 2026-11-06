@@ -31,6 +31,14 @@ const { server } = createStudioServer({
     await writeFile(path.join(outDir, 'discovery-page-1.png'), Buffer.from([137, 80, 78, 71]));
     return { plan: landingPlan, plans: [landingPlan, secondPlan], report };
   },
+  hostingerImpl: async (_url, { outDir }) => {
+    await writeFile(path.join(outDir, 'hostinger-pricing.png'), Buffer.from([137, 80, 78, 71]));
+    return {
+      plan: { ...landingPlan, url: 'https://www.hostinger.com/vn#pricing' },
+      evidence: { cards: [{ name: 'Premium', monthly: '41.900 đ/th', selector: '#premium' }] },
+      report: { status: 'completed', screenshot: 'hostinger-pricing.png', warnings: [] },
+    };
+  },
   assembleImpl: () => ({
     ...landingPlan, steps: [
       landingPlan.steps[0],
@@ -138,4 +146,19 @@ test('Studio queues discovery, retrieves screenshot, assembles and downloads vid
   assert.equal(video.status, 200);
   assert.equal(video.headers.get('content-type'), 'video/mp4');
   assert.match(await video.text(), /fake MP4 API test/);
+});
+
+test('Studio Hostinger adapter rejects untrusted URLs and serves only observed read-only guide', async () => {
+  const bad = await post('/api/hostinger', { url: 'https://hostinger.com.evil.test/vn' });
+  assert.equal(bad.status, 422);
+  const created = await post('/api/hostinger', { url: 'https://www.hostinger.com/vn#pricing', language: 'vi' });
+  assert.equal(created.status, 202);
+  const job = await poll((await created.json()).jobId);
+  assert.equal(job.status, 'completed');
+  assert.equal(job.hostinger.plan.steps[0].action, 'highlight');
+  assert.equal(job.hostinger.evidence.cards[0].monthly, '41.900 đ/th');
+  const screenshot = await fetch(origin + '/api/jobs/' + job.id + '/hostinger-screenshot');
+  assert.equal(screenshot.status, 200);
+  assert.equal(screenshot.headers.get('content-type'), 'image/png');
+  assert.equal((await post('/api/validate', { plan: job.hostinger.plan })).status, 200);
 });
