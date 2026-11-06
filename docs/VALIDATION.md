@@ -145,3 +145,8 @@ Do not close the affected issues until the human/production gates are supplied.
 - Branch removal is gated on successful Linux and macOS CI. Cleanup only touches the eight exact heads in the audited manifest; absent branches are skipped and changed branches are retained with an error.
 
 Remaining: user MacBook visual/audio/performance acceptance; live billable AI test; cloud deployment/isolation/security acceptance. Issues remain open where those gates apply.
+
+
+### Webreel follow-up after run 42251096818
+
+Linux passed all 39 unit/process checks and all core/browser E2E suites, then stock Webreel still failed with missing raw MP4. Source inspection and upstream PR #12 identify a screenshot/manual-frame deadlock. The benchmark now applies a source-hash-guarded launcher compatibility patch only in a disposable installation and reports the patch in its artifact. Runtime acceptance depends on the next main CI run; this does not claim unpatched Webreel success.

@@ -32,7 +32,7 @@ Run:
 
     npm run test:webreel:e2e
 
-The test uses npx --yes webreel@0.1.4 without adding Webreel to the app's runtime dependencies. It records the same local HTML fixture with the same 1280×720 viewport using:
+The test installs webreel@0.1.4 in a disposable temporary directory without adding Webreel to the app's runtime dependencies or modifying the npm cache. It records the same local HTML fixture with the same 1280×720 viewport using:
 - Existing Playwright + Driver.js renderer.
 - Webreel's independent Chrome/CDP cursor/HUD renderer.
 
@@ -45,3 +45,10 @@ Webreel remains optional because its upstream project has open reports affecting
 ### Toolchain reliability
 
 The A/B harness uses the installed Playwright Chromium and system FFmpeg via Webreel's `CHROME_PATH` / `FFMPEG_PATH` options. It records their paths and FFmpeg version in `toolchain.json`, avoiding a second implicit browser/encoder download. The previous main CI failed because Webreel did not produce its temporary MP4 before the rename step; see run 42211557034. The comparison still fails when no valid candidate video is produced; no skip or fabricated baseline is used.
+
+
+### Known upstream capture deadlock and scoped compatibility patch
+
+Stock Webreel 0.1.4 reproduced a missing temporary MP4 in runs 42211557034 and 42251096818. The installed source enables `--enable-begin-frame-control` but its recorder calls `Page.captureScreenshot` without advancing manual frames; upstream [issue #8](https://github.com/vercel-labs/webreel/issues/8) and [PR #12](https://github.com/vercel-labs/webreel/pull/12) describe the same hang. Setting CHROME_PATH alone does not work because stock headless launch ignores it.
+
+Only the disposable benchmark installation is patched: replace begin-frame-control with headless mode and honor CHROME_PATH for both launch modes. The script verifies the exact published chrome.js SHA256 before editing, then records original/patched hashes and toolchain versions. Both A/B recordings use the installed Chromium binary and system FFmpeg. The output is explicitly labeled **Webreel 0.1.4 with compatibility patch**, not evidence that stock upstream works. Revisit the patch when upgrading; fail closed on source drift.

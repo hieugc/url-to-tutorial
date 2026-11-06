@@ -69,7 +69,7 @@ The login context has no video recording. After the user confirms in the termina
 
 ### Webreel A/B capture
 
-`npm run test:webreel:e2e` downloads Webreel CLI v0.1.4 ephemerally with `npx`, reuses installed Playwright Chromium and system FFmpeg, records the same local fixture at 1280×720, and compares its output with the Playwright/Driver.js video using FFprobe. Results and both videos are written to `output/webreel-ab/`. Webreel is not a default runtime dependency or replacement renderer; its cursor/HUD differs from Driver.js, so a human visual comparison remains required. Upstream: [vercel-labs/webreel](https://github.com/vercel-labs/webreel) (Apache-2.0).
+`npm run test:webreel:e2e` installs Webreel CLI v0.1.4 in a disposable directory, reuses installed Playwright Chromium and system FFmpeg, records the same local fixture at 1280×720, and compares its output with the Playwright/Driver.js video using FFprobe. Results and both videos are written to `output/webreel-ab/`. The harness applies a SHA256-guarded launcher compatibility patch for upstream [#12](https://github.com/vercel-labs/webreel/pull/12): remove begin-frame-control to unblock screenshot capture, and honor the installed Chromium path in headless mode. Patch hashes are saved in `toolchain.json`; the npm cache is untouched. Webreel is not a default runtime dependency or replacement renderer; its cursor/HUD differs from Driver.js, so a human visual comparison remains required. Upstream: [vercel-labs/webreel](https://github.com/vercel-labs/webreel) (Apache-2.0).
 
 ### Discovery safety
 
