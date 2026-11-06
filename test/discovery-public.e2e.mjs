@@ -35,6 +35,11 @@ const server = createServer((req, res) => {
     res.writeHead(302, { Location: '/child' });
     return res.end();
   }
+  if (req.url === '/mfa') {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.end('<!doctype html><h1>Verification required</h1>' +
+      '<input autocomplete="one-time-code" value="123456" aria-label="Verification">');
+  }
   if (req.url === '/child') {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.end('<!doctype html><h1>Child page</h1><a href="/logout">Logout</a>');
@@ -101,6 +106,19 @@ try {
   }), /Redirect refused before following target/,
   'Even same-origin redirects are refused to prevent chained external redirects');
   assert.equal(externalOriginHits, 0);
+
+  const challengeRoot = root + '-mfa';
+  await assert.rejects(explore(base + '/mfa', {
+    maxPages: 1, outDir: challengeRoot, language: 'en',
+  }), /CAPTCHA\/MFA\/OTP/);
+  const challengeReport = JSON.parse(await readFile(challengeRoot + '/discovery-report.json', 'utf8'));
+  assert.equal(challengeReport.status, 'failed');
+  assert.equal(challengeReport.pages[0].screenshot, null,
+    'A blocked MFA page must not be included in screenshots');
+  await assert.rejects(access(challengeRoot + '/discovery-page-1.png'));
+  assert.ok(!JSON.stringify(challengeReport).includes('123456'),
+    'The raw OTP must not be captured in the discovery report');
+
   console.log(JSON.stringify({
     result: 'PASS',
     controlledPages: controlled.report.pages.map(page => ({
@@ -110,6 +128,7 @@ try {
     externalOriginHits, automaticWrites, websocketUpgrades,
     blockedHttpMutations: controlled.report.blockedHttpMutations,
     blockedWebSockets: controlled.report.blockedWebSockets,
+    mfaScreenshotBlocked: challengeReport.pages[0].screenshot === null,
   }));
 } finally {
   server.closeAllConnections();
