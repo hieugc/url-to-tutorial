@@ -12,13 +12,17 @@
     "test": "node --test test/*.test.mjs",
     "tutorial": "node src/cli.mjs",
     "demo": "node src/cli.mjs demo",
-    "test:e2e": "node test/e2e.mjs"
+    "test:e2e": "node test/e2e.mjs",
+    "studio": "node src/studio-server.mjs",
+    "test:studio:e2e": "node test/studio.e2e.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "UNLICENSED",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "driver.js": "1.10.2",
     "playwright": "1.64.1",
