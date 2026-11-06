@@ -5,6 +5,9 @@ import { explore, safePageLink } from '../src/discover.mjs';
 
 const root = 'output/e2e-discovery-public';
 let formSubmissions = 0;
+let automaticWrites = 0;
+let readOnlyPings = 0;
+let websocketUpgrades = 0;
 let redirectTargetUrl;
 let externalOriginHits = 0;
 const externalOrigin = createServer((_req, res) => {
@@ -14,6 +17,16 @@ const externalOrigin = createServer((_req, res) => {
 });
 const server = createServer((req, res) => {
   if (req.method === 'POST') formSubmissions++;
+  if (!['GET', 'HEAD'].includes(req.method)) automaticWrites++;
+  if (req.url === '/read-ping') {
+    readOnlyPings++;
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    return res.end('ok');
+  }
+  if (req.url === '/write-test') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    return res.end('write was incorrectly allowed');
+  }
   if (req.url === '/redirect') {
     res.writeHead(302, { Location: redirectTargetUrl + '/private-redirect-target' });
     return res.end();
@@ -31,8 +44,18 @@ const server = createServer((req, res) => {
     '<h2>Features</h2><a href="/child">Read child page</a>' +
     '<a href="https://example.org/external">External link</a>' +
     '<form><input name="email"><button type="submit">Submit</button></form>' +
-    '<script>window.__clicked=0;document.querySelector("button").onclick=()=>window.__clicked++;</script>' +
+    '<script>window.__clicked=0;document.querySelector("button").onclick=()=>window.__clicked++;' +
+    'fetch("/read-ping").catch(()=>{});' +
+    'fetch("/write-test",{method:"POST",body:"unsafe"}).catch(()=>{});' +
+    'fetch("/write-test",{method:"PATCH",body:"unsafe"}).catch(()=>{});' +
+    'const ws=new WebSocket("ws://"+location.host+"/write-socket");ws.onerror=()=>{};' +
+    '</script>' +
     '</main></body></html>');
+});
+// An intercepted socket must never upgrade to the application server.
+server.on('upgrade', (_req, socket) => {
+  websocketUpgrades++;
+  socket.destroy();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 await new Promise(resolve => externalOrigin.listen(0, '127.0.0.1', resolve));
@@ -46,6 +69,13 @@ try {
   assert.ok(controlled.report.pages.some(page => page.candidateCount > 0));
   assert.ok(controlled.plans.length >= 1);
   assert.equal(formSubmissions, 0, 'Discovery must never submit forms or click controls');
+  assert.ok(readOnlyPings >= 1, 'Fixture JavaScript must have actually run');
+  assert.ok(controlled.report.blockedHttpMutations >= 2,
+    'Explorer must intercept automatic POST and PATCH before network send');
+  assert.ok(controlled.report.blockedWebSockets >= 1,
+    'Explorer must intercept WebSocket before the server handshake');
+  assert.equal(automaticWrites, 0, 'Server must receive zero non-read HTTP methods');
+  assert.equal(websocketUpgrades, 0, 'Server must receive zero WebSocket upgrades');
   await access(root + '/discovery-page-1.png');
   const saved = JSON.parse(await readFile(root + '/discovery-report.json', 'utf8'));
   assert.equal(saved.status, 'completed');
@@ -77,7 +107,9 @@ try {
       status: page.status, finalUrl: page.finalUrl, candidates: page.candidateCount,
     })),
     externalRedirect: failed.pages[0].error,
-    externalOriginHits,
+    externalOriginHits, automaticWrites, websocketUpgrades,
+    blockedHttpMutations: controlled.report.blockedHttpMutations,
+    blockedWebSockets: controlled.report.blockedWebSockets,
   }));
 } finally {
   server.closeAllConnections();
