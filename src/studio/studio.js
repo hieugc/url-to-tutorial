@@ -30,6 +30,7 @@ async function api(route, body) {
 function switchBusy(busy) {
   state.busy = busy;
   $('discover').disabled = busy;
+  $('hostinger-guide').disabled = busy;
   $('import').disabled = busy;
   $('add').disabled = busy || !state.plan;
   $('validate').disabled = busy || !state.plan;
@@ -356,6 +357,31 @@ async function discover(event) {
   } finally { switchBusy(false); }
 }
 
+async function hostingerGuide() {
+  const url = $('url').value.trim();
+  if (!url) return toast('Enter a Hostinger Vietnam URL first', true);
+  switchBusy(true);
+  try {
+    const job = await api('/api/hostinger', { url, language: $('language').value });
+    const result = await awaitJob(job.jobId, 'Reading Hostinger pricing');
+    if (!result.hostinger?.plan) throw new Error('No observed pricing plan available');
+    const data = result.hostinger;
+    loadPlan(data.plan, { discoveryJobId: null, pages: 1 });
+    $('assemble').hidden = true;
+    const screenshot = data.report?.screenshot;
+    $('preview-figure').hidden = !screenshot;
+    if (screenshot) $('site-screenshot').src = '/api/jobs/' + job.jobId + '/hostinger-screenshot';
+    const warning = data.report?.warnings?.join(' | ') || 'Review current pricing and terms before publishing';
+    showJob('Hostinger pricing captured', data.evidence.cards.length + ' verified plan(s). ' + warning);
+    toast('Read-only Hostinger plan created from observed DOM. Validate before rendering.');
+  } catch (error) {
+    toast(error.message, true);
+    showJob('Hostinger adapter failed', error.message);
+  } finally {
+    switchBusy(false);
+  }
+}
+
 async function assemble() {
   if (!state.discoveryJobId) return;
   if (!commitStep()) return;
@@ -393,6 +419,7 @@ async function execute(type) {
 }
 
 $('discover-form').addEventListener('submit', discover);
+$('hostinger-guide').addEventListener('click', hostingerGuide);
 $('step-form').addEventListener('submit', event => { event.preventDefault(); commitStep(true); });
 $('target-type').addEventListener('change', targetFields);
 $('step-action').addEventListener('change', actionFields);
