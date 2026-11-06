@@ -17,3 +17,7 @@
 .hostinger-shortcut{display:flex;align-items:center;justify-content:flex-end;gap:14px;border-top:1px solid #eef2f3;padding-top:14px;margin-top:15px}
 .hostinger-shortcut span{font-size:10px;line-height:1.5;color:var(--muted)}
 @media(max-width:650px){.hostinger-shortcut{align-items:stretch;flex-direction:column}}
+
+.goal-shortcut{display:grid;grid-template-columns:minmax(240px,1fr) auto auto;align-items:center;gap:16px;border-top:1px solid #eef2f3;margin-top:15px;padding-top:17px}
+.goal-shortcut .field{margin:0}.goal-shortcut .goal-ai-toggle{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:680;color:#455c66;white-space:nowrap}.goal-ai-toggle input{accent-color:var(--teal);width:16px;height:16px}
+@media(max-width:850px){.goal-shortcut{grid-template-columns:1fr}.goal-shortcut .btn{justify-self:start}}

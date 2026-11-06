@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { explore } from './discover.mjs';
+import { createGoalGuide } from './goal-planner.mjs';
 import { createHostingerGuide } from './adapters/hostinger.mjs';
 import { assembleDiscovery } from './assemble.mjs';
 import { render } from './render.mjs';
@@ -12,6 +13,7 @@ import { Plan, validatePlanForExecution } from './plan.mjs';
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   out: { type: 'string' }, headed: { type: 'boolean', default: false }, language: { type: 'string', default: 'vi' },
   'max-pages': { type: 'string', default: '1' },
+  goal: { type: 'string' }, ai: { type: 'boolean', default: false },
 } });
 const [action, input] = positionals;
 const outDir = values.out || 'output/' + new Date().toISOString().replace(/[:.]/g, '-');
@@ -32,6 +34,15 @@ try {
     console.log('Discovery evidence: ' + path.join(outDir, 'discovery-report.json'));
     console.log('Plan: ' + outDir + '/plan.json (overview; no automatic clicks)');
     if (action === 'run') console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
+  } else if (action === 'goal') {
+    const { plan, report } = await createGoalGuide(input, {
+      goal: values.goal, language: values.language, ai: values.ai, outDir,
+    });
+    console.log('Goal-based draft created: ' + plan.steps.length + ' steps');
+    console.log('Provider: ' + report.provider);
+    console.log('Plan: ' + path.join(outDir, 'plan.json'));
+    console.log('Grounding evidence: ' + path.join(outDir, 'goal-evidence.json'));
+    console.log('Read-only highlight/stop only. No task execution is approved.');
   } else if (action === 'hostinger') {
     const { plan, evidence, report } = await createHostingerGuide(input, {
       outDir, headed: values.headed, language: values.language,
@@ -72,7 +83,7 @@ try {
       console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
     } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   } else {
-    console.log('Commands: hostinger <https://www.hostinger.com/vn#pricing> | discover <url> | assemble <discovery-dir> | run <url> | validate <plan.json> | preview <plan.json> | render <plan.json> | demo\nOptions: --out output/name --headed --language vi|en --max-pages 1..5');
+    console.log('Commands: goal <url> --goal <text> [--ai] | hostinger <https://www.hostinger.com/vn#pricing> | discover <url> | assemble <discovery-dir> | run <url> | validate <plan.json> | preview <plan.json> | render <plan.json> | demo\nOptions: --out output/name --headed --language vi|en --max-pages 1..5');
     if (action) process.exitCode = 1;
   }
 } catch (error) { console.error(error.message); process.exitCode = 1; }

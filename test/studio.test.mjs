@@ -31,6 +31,16 @@ const { server } = createStudioServer({
     await writeFile(path.join(outDir, 'discovery-page-1.png'), Buffer.from([137, 80, 78, 71]));
     return { plan: landingPlan, plans: [landingPlan, secondPlan], report };
   },
+  goalImpl: async (_url, { outDir }) => {
+    await writeFile(path.join(outDir, 'discovery-page-1.png'), Buffer.from([137, 80, 78, 71]));
+    return {
+      plan: { ...landingPlan, title: 'Goal-based guide' },
+      evidence: { selectedIds: ['candidate-1'], candidates: [
+        { id: 'candidate-1', text: 'Guide overview', css: 'body' },
+      ] },
+      report: { status: 'completed', provider: 'offline-keyword' },
+    };
+  },
   hostingerImpl: async (_url, { outDir }) => {
     await writeFile(path.join(outDir, 'hostinger-pricing.png'), Buffer.from([137, 80, 78, 71]));
     return {
@@ -161,4 +171,19 @@ test('Studio Hostinger adapter rejects untrusted URLs and serves only observed r
   assert.equal(screenshot.status, 200);
   assert.equal(screenshot.headers.get('content-type'), 'image/png');
   assert.equal((await post('/api/validate', { plan: job.hostinger.plan })).status, 200);
+});
+
+test('Studio goal planner enforces input length and serves grounded draft', async () => {
+  assert.equal((await post('/api/goal', { url: 'https://example.com', goal: 'a' })).status, 422);
+  const started = await post('/api/goal', {
+    url: 'https://example.com', goal: 'Guide overview', ai: false, language: 'vi',
+  });
+  assert.equal(started.status, 202);
+  const result = await poll((await started.json()).jobId);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.goal.plan.steps[0].action, 'highlight');
+  assert.deepEqual(result.goal.evidence.selectedIds, ['candidate-1']);
+  const screenshot = await fetch(origin + '/api/jobs/' + result.id + '/goal-screenshot');
+  assert.equal(screenshot.status, 200);
+  assert.equal(screenshot.headers.get('content-type'), 'image/png');
 });

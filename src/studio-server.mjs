@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { explore } from './discover.mjs';
+import { createGoalGuide } from './goal-planner.mjs';
 import { createHostingerGuide, validateHostingerUrl } from './adapters/hostinger.mjs';
 import { assemblePages } from './assemble.mjs';
 import { HttpUrl, Plan, validatePlanForExecution } from './plan.mjs';
@@ -86,6 +87,7 @@ function publicReport(report) {
 export function createStudioServer({
   outputRoot = path.resolve('output/studio'),
   exploreImpl = explore,
+  goalImpl = createGoalGuide,
   hostingerImpl = createHostingerGuide,
   assembleImpl = assemblePages,
   renderImpl = render,
@@ -156,6 +158,9 @@ export function createStudioServer({
         if (job.status === 'completed' && job.type === 'discover') {
           data.discovery = { plan: job.result.plan, plans: job.result.plans, report: job.result.report };
         }
+        if (job.status === 'completed' && job.type === 'goal') {
+          data.goal = { plan: job.result.plan, evidence: job.result.evidence, report: job.result.report };
+        }
         if (job.status === 'completed' && job.type === 'hostinger') {
           data.hostinger = { plan: job.result.plan, evidence: job.result.evidence, report: job.result.report };
         }
@@ -208,6 +213,20 @@ export function createStudioServer({
         return createReadStream(file).pipe(res);
       }
 
+      const goalScreenshot = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/goal-screenshot$/i);
+      if (req.method === 'GET' && goalScreenshot) {
+        const job = jobs.get(goalScreenshot[1]);
+        if (!job || job.type !== 'goal' || job.status !== 'completed') {
+          return json(res, 404, { error: 'Goal screenshot not found' });
+        }
+        const file = path.join(job.outputDir, 'discovery-page-1.png');
+        let info;
+        try { info = await stat(file); }
+        catch { return json(res, 404, { error: 'Goal screenshot missing' }); }
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': info.size, 'Cache-Control': 'no-store' });
+        return createReadStream(file).pipe(res);
+      }
+
       if (req.method !== 'POST') return json(res, 404, { error: 'Unknown route' });
       const body = await bodyJson(req);
 
@@ -215,6 +234,20 @@ export function createStudioServer({
         const checked = checkPlan(body.plan);
         const { plan: _plan, ...result } = checked;
         return json(res, checked.valid ? 200 : 422, result);
+      }
+
+      if (pathname === '/api/goal') {
+        const url = HttpUrl.safeParse(body.url);
+        const goal = typeof body.goal === 'string' ? body.goal.trim() : '';
+        const language = body.language ?? 'vi';
+        const ai = body.ai === true;
+        if (!url.success || goal.length < 4 || goal.length > 400 || !['vi', 'en'].includes(language)) {
+          return json(res, 422, { error: 'Valid URL, specific goal (4–400 characters), and language vi/en required' });
+        }
+        const job = start('goal', current => goalImpl(url.data, {
+          goal, ai, language, outDir: current.outputDir,
+        }));
+        return json(res, 202, { jobId: job.id, status: job.status });
       }
 
       if (pathname === '/api/hostinger') {

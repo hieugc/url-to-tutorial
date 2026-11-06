@@ -77,3 +77,13 @@ Thay vì tạo React/Vite mới, giao diện đầu tiên dùng HTML/CSS/JS thu�
 Các route đã thực hiện: `POST /api/discover`, `POST /api/assemble`, `POST /api/validate`, `POST /api/preview`, `POST /api/render`, `GET /api/jobs/:id`, `GET /api/jobs/:id/video`, `GET /api/jobs/:id/screenshot/:page`, `GET /api/health`. Studio không thay đổi format plan JSON hiện tại.
 
 Bảo mật: server không bind public interface, kiểm tra Host và Origin, CSP, Content-Type JSON, giới hạn body và queue, chỉ phục vụ danh sách file static và tên artifact từ jobId sinh server. **Đây không phải backend phục vụ Internet:** chưa có auth, egress denylist, sandbox web worker, persistence, CSRF token độc lập, quota đa tenant hay chống lạm dụng SSRF trong target website. Người vận hành phải tự kiểm soát URL đầu vào.
+
+
+## UTV-004 Goal planner v0.1
+
+- Evidence source: first public page from `explore()` candidate list; no hidden form data, passwords or credit-card labels. Each candidate has a server-generated stable ID and a real observed CSS selector.
+- Offline selection: lexical overlap between goal and candidate labels; returns error when none match, never picks unrelated UI.
+- Optional model selection: server-side Responses API `text.format=json_schema`, `store=false`, limited candidates and tokens, returns only ID list + reason. No model-provided CSS, URL, JS or browser action is accepted. Model may be controlled via `OPENAI_MODEL`, credentials through `OPENAI_API_KEY` on the local server.
+- Reconstruction and validation: ID list is checked against the server's evidence, capped at six. `Plan.parse` enforces only `highlight` + terminal `stop`. No auto-review, account creation, purchasing, checkout or multi-page click workflow.
+- Runtime artifacts: `plan.json`, `goal-evidence.json`, discovery DOM report and screenshot. Hostinger pricing specifics remain handled by UTV-002 adapter.
+- Unfinished: contextual task/state discovery, selector drift diagnostics after render, full AI response review, live model-backed QA and privacy threat testing. No API key is configured in GitHub CI; model request unit tests use a fake fetch.
