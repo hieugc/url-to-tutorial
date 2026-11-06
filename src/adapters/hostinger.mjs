@@ -184,6 +184,7 @@ export async function createHostingerGuide(url, { headed = false, language = 'vi
     note: 'Read-only observation. No click, cookie consent, account login, plan selection or checkout. Prices may change.',
   };
   let browser;
+  let evidence = null;
   try {
     browser = await launch(headed);
     const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: language === 'vi' ? 'vi-VN' : 'en-US' });
@@ -217,16 +218,23 @@ export async function createHostingerGuide(url, { headed = false, language = 'vi
       }
     }
     if (root) {
+      // Keep the evidence frame centered on the exact plan card, rather than
+      // a generic hero section above the pricing table.
+      const chosen = observed?.cards?.find(card => card.name.toLowerCase() === focus.toLowerCase()) || observed?.cards?.[0];
+      if (chosen) {
+        try { await page.locator(chosen.selector).scrollIntoViewIfNeeded({ timeout: 6000 }); }
+        catch (error) { report.warnings.push('Could not scroll pricing card into view: ' + error.message); }
+      }
       report.screenshot = 'hostinger-pricing.png';
       await page.screenshot({ path: path.join(root, report.screenshot), fullPage: false });
     }
     if (!observed?.cards.length) throw new Error('Hostinger pricing not detected on the visited pages. See hostinger-evidence.json and screenshot.');
     report.status = 'completed';
-    report.warnings = observed.warnings;
+    report.warnings.push(...observed.warnings);
     if (!observed.cards.some(card => card.name.toLowerCase() === focus.toLowerCase())) {
       report.warnings.push('Preferred plan ' + focus + ' not observed; no specific plan is assumed');
     }
-    const evidence = {
+    evidence = {
       observedAt: new Date().toISOString(), sourceUrl: observed.url,
       selectedPlan: observed.cards.find(card => card.name.toLowerCase() === focus.toLowerCase())?.name || null,
       cards: observed.cards.map(card => ({
@@ -244,7 +252,7 @@ export async function createHostingerGuide(url, { headed = false, language = 'vi
     throw error;
   } finally {
     report.finishedAt = new Date().toISOString();
-    if (root) await writeFile(path.join(root, 'hostinger-evidence.json'), JSON.stringify(report, null, 2));
+    if (root) await writeFile(path.join(root, 'hostinger-evidence.json'), JSON.stringify({ ...report, evidence }, null, 2));
     await browser?.close();
   }
 }
