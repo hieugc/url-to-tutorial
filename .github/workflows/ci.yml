@@ -42,7 +42,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: echo "macOS runner architecture: $(uname -m)"
+      - run: 'echo "macOS runner architecture: $(uname -m)"'
       - run: npm ci
       - run: npx playwright install chromium
       - run: brew install ffmpeg espeak-ng
