@@ -292,9 +292,19 @@ async function validate() {
   if (!commitStep()) return;
   switchBusy(true);
   try {
-    const result = await api('/api/validate', { plan: state.plan });
+    const response = await fetch('/api/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: state.plan }),
+    });
+    const result = await response.json();
+    // A structurally invalid plan returns 422, but its detailed errors must
+    // remain visible inside the editor instead of being collapsed into a toast.
+    if (response.status !== 200 && response.status !== 422) {
+      throw new Error(result.error || 'Validation service unavailable');
+    }
     updateValidation(result);
-    toast(result.ready ? 'Plan is valid and reviewed' : 'Plan has review issues');
+    toast(result.ready ? 'Plan is valid and reviewed' : 'Correct the listed validation issues');
   } catch (error) {
     state.ready = false;
     $('readiness').textContent = error.message;
