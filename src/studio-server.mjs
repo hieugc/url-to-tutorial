@@ -93,6 +93,13 @@ function idempotencyKey(req) {
   return key;
 }
 
+function isSafeRetryable(job) {
+  return Boolean(job?.request) &&
+    ['failed', 'cancelled', 'interrupted'].includes(job.status) &&
+    ['discover', 'hostinger', 'goal'].includes(job.type) &&
+    !(job.type === 'goal' && job.request.ai === true);
+}
+
 function publicReport(report) {
   if (!report) return null;
   const copy = structuredClone(report);
@@ -209,6 +216,7 @@ export function createStudioServer({
           jobs: [...jobs.values()].slice(-40).reverse().map(job => ({
             id: job.id, type: job.type, status: job.status, createdAt: job.createdAt,
             finishedAt: job.finishedAt, error: job.error, cancelRequested: job.cancelRequested === true,
+            retryable: isSafeRetryable(job),
           })),
         });
       }
@@ -361,14 +369,10 @@ export function createStudioServer({
       if (retryMatch) {
         const source = jobs.get(retryMatch[1]);
         if (!source) return json(res, 404, { error: 'Unknown job' });
-        if (!['failed', 'cancelled', 'interrupted'].includes(source.status)) {
-          return json(res, 409, { error: 'Only interrupted or failed read-only jobs can be retried' });
+        if (!isSafeRetryable(source)) {
+          return json(res, 409, { error: 'Retry allowed only for failed/cancelled/interrupted read-only jobs; not paid AI or browser actions' });
         }
         const request = source.request;
-        if (!request || !['discover', 'hostinger', 'goal'].includes(source.type) ||
-            (source.type === 'goal' && request.ai)) {
-          return json(res, 409, { error: 'Retry is disabled for browser actions, paid AI calls and unknown job inputs' });
-        }
         const job = start(source.type, (current, signal) => {
           if (source.type === 'discover') return exploreImpl(request.url, {
             outDir: current.outputDir, maxPages: request.maxPages, language: request.language, signal,

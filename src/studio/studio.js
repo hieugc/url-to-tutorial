@@ -356,6 +356,7 @@ async function awaitJob(jobId, title) {
       state.activeJobId = null;
       $('cancel-job').hidden = true;
       $('cancel-job').disabled = false;
+      refreshJobHistory().catch(() => {});
     }
   }
 }
@@ -371,6 +372,113 @@ async function cancelActiveJob() {
     $('cancel-job').disabled = false;
     toast(error.message, true);
   }
+}
+
+// Persistent job history is a read-only view. Each recovered job is opened
+// only by an explicit user click; opening a plan never executes browser work.
+async function refreshJobHistory() {
+  const response = await api('/api/jobs');
+  const list = $('history-list');
+  list.replaceChildren();
+  const jobs = Array.isArray(response.jobs) ? response.jobs : [];
+  if (!jobs.length) {
+    const empty = document.createElement('li');
+    empty.className = 'muted';
+    empty.textContent = 'No jobs yet. Discover a website to create the first job.';
+    list.append(empty);
+    return;
+  }
+  for (const job of jobs) {
+    const item = document.createElement('li');
+    item.className = 'history-row';
+    const summary = document.createElement('div');
+    summary.className = 'history-summary';
+    const title = document.createElement('strong');
+    title.textContent = job.type + ' · ' + job.status;
+    const detail = document.createElement('small');
+    const date = new Date(job.createdAt);
+    const time = Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+    detail.textContent = [time, job.error].filter(Boolean).join(' · ');
+    summary.append(title, detail);
+    const actions = document.createElement('div');
+    actions.className = 'history-actions';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'btn secondary';
+    open.textContent = 'Open';
+    open.setAttribute('aria-label', 'Open ' + job.type + ' job ' + job.id);
+    open.addEventListener('click', () => openStoredJob(job.id).catch(error => toast(error.message, true)));
+    actions.append(open);
+    if (job.retryable === true) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'btn secondary';
+      retry.textContent = 'Retry';
+      retry.setAttribute('aria-label', 'Retry read-only ' + job.type + ' job ' + job.id);
+      retry.addEventListener('click', () => retryStoredJob(job.id).catch(error => toast(error.message, true)));
+      actions.append(retry);
+    }
+    item.append(summary, actions);
+    list.append(item);
+  }
+}
+
+async function openStoredJob(id) {
+  if (state.busy) return toast('Finish the active job before opening saved history', true);
+  const result = await api('/api/jobs/' + encodeURIComponent(id));
+  if (result.status === 'completed') {
+    const saved = result.discovery || result.goal || result.hostinger;
+    if (saved?.plan) {
+      if (state.plan && !window.confirm('Replace the current editor plan with the saved job plan? Unsaved changes will be lost.')) return;
+      const pages = result.discovery?.plans?.length || 1;
+      loadPlan(saved.plan, { discoveryJobId: result.discovery ? id : null, pages });
+      $('assemble').hidden = !result.discovery || pages < 2;
+      const screenshot = result.discovery?.report?.pages?.[0]?.screenshot;
+      const goalScreenshot = Boolean(result.goal);
+      const hostingerScreenshot = Boolean(result.hostinger?.report?.screenshot);
+      $('preview-figure').hidden = !screenshot && !goalScreenshot && !hostingerScreenshot;
+      if (screenshot) $('site-screenshot').src = '/api/jobs/' + id + '/screenshot/1';
+      else if (goalScreenshot) $('site-screenshot').src = '/api/jobs/' + id + '/goal-screenshot';
+      else if (hostingerScreenshot) $('site-screenshot').src = '/api/jobs/' + id + '/hostinger-screenshot';
+      showJob('Saved ' + result.type + ' plan', 'Recovered from local SQLite history. Validate before rendering.');
+      toast('Saved plan loaded; no browser actions executed.');
+      return;
+    }
+    if (result.videoUrl) {
+      showJob('Saved MP4', 'Completed video from job ' + id);
+      $('download').href = result.videoUrl;
+      $('download').hidden = false;
+      if (result.subtitleUrls) {
+        $('srt-download').href = result.subtitleUrls.srt;
+        $('vtt-download').href = result.subtitleUrls.vtt;
+        $('srt-download').hidden = false;
+        $('vtt-download').hidden = false;
+      }
+      return;
+    }
+  }
+  showJob(result.type + ' · ' + result.status,
+    result.error || (result.status === 'running' ? 'Job still running in Studio' : 'No downloadable output'));
+}
+
+async function retryStoredJob(id) {
+  if (state.busy) return toast('Finish the active job before retrying history', true);
+  if (!window.confirm('Explicitly retry this failed read-only job? This will revisit the target URL but never replay approved actions or paid AI.')) return;
+  switchBusy(true);
+  let completedId = null;
+  try {
+    const started = await api('/api/jobs/' + encodeURIComponent(id) + '/retry', {});
+    const result = await awaitJob(started.jobId, 'Retrying read-only job');
+    completedId = result.id;
+    toast('Read-only job completed. Open saved result to review.');
+  } catch (error) {
+    showJob('Read-only retry failed', error.message);
+    toast(error.message, true);
+  } finally {
+    switchBusy(false);
+    await refreshJobHistory().catch(() => {});
+  }
+  if (completedId) await openStoredJob(completedId);
 }
 
 async function discover(event) {
@@ -525,6 +633,8 @@ $('validate').addEventListener('click', validate);
 $('preview').addEventListener('click', () => execute('preview'));
 $('render').addEventListener('click', () => execute('render'));
 $('cancel-job').addEventListener('click', cancelActiveJob);
+$('history-refresh').addEventListener('click', () =>
+  refreshJobHistory().catch(error => toast(error.message, true)));
 $('assemble').addEventListener('click', assemble);
 $('plan-title').addEventListener('change', event => {
   if (!state.plan) return;
@@ -537,4 +647,12 @@ $('apply-json').addEventListener('click', () => {
     loadPlan(parsed);
     toast('Applied JSON. Validate before running.');
   } catch (error) { toast('Invalid JSON: ' + error.message, true); }
+});
+
+refreshJobHistory().catch(error => {
+  $('history-list').replaceChildren();
+  const item = document.createElement('li');
+  item.className = 'muted';
+  item.textContent = 'Job history unavailable: ' + error.message;
+  $('history-list').append(item);
 });
