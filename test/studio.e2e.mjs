@@ -52,10 +52,26 @@ try {
   await page.locator('#step-title').fill('Getting started');
   await page.locator('#step-description').fill('Edited in the Studio UI');
   await page.getByRole('button', { name: 'Save step' }).click();
+
+  // Invalid structure must show concrete errors in the Readiness panel.
+  await page.locator('#target-type').selectOption('none');
+  await page.getByRole('button', { name: 'Save step' }).click();
+  await page.getByRole('button', { name: 'Validate' }).click();
+  await page.getByText(/Invalid plan/).waitFor();
+  assert.ok(await page.locator('#issues li').count() > 0);
+
+  // Set a reviewed action and verify the explicit execution confirmation.
+  await page.locator('#target-type').selectOption('css');
+  await page.locator('#target-css').fill('h1');
+  await page.locator('#step-action').selectOption('navigate');
+  await page.locator('#navigate-url').fill('https://example.com/demo');
+  await page.locator('#reviewed').check();
+  await page.getByRole('button', { name: 'Save step' }).click();
   await page.getByRole('button', { name: 'Validate' }).click();
   await page.getByText('Ready to preview / render').waitFor();
   await page.screenshot({ path: path.join(root, 'studio-editor.png'), fullPage: true });
 
+  page.on('dialog', dialog => dialog.accept());
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /Render MP4/ }).click();
   const downloadButton = page.getByRole('link', { name: /Download MP4/ });
