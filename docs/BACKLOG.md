@@ -7,7 +7,7 @@
 | [UTV-010](https://github.com/hieugc/url-to-tutorial/issues/12) | Discovery evidence + multi-page read-only | Status HTTP, screenshot, plan riêng mỗi trang, giới hạn và an toàn điều hướng | CI PASS; local QA pending |
 | [UTV-011](https://github.com/hieugc/url-to-tutorial/issues/13) | Conditional workflow + multi-page assembly | IF/ELSE visible/hidden, forward-only graph, review gate, one continuous MP4 | CI PASS; local QA pending |
 | [UTV-003](https://github.com/hieugc/url-to-tutorial/issues/5) | Studio editor | Nhập URL, sửa/reorder steps, preview, download MP4 | Merged to main; CI unit+Chromium PASS; macOS/manual QA pending |
-| [UTV-004](https://github.com/hieugc/url-to-tutorial/issues/6) | AI planner có mục tiêu | JSON grounded trong observed DOM; phát hiện task không đủ dữ liệu | Offline goal guide + optional structured AI selector implemented; CI/live model QA pending |
+| [UTV-004](https://github.com/hieugc/url-to-tutorial/issues/6) | AI planner có mục tiêu | JSON grounded trong observed DOM; phát hiện task không đủ dữ liệu | PR #16 merged; offline + mocked AI/Chromium CI PASS; live model/Mac QA pending |
 | [UTV-005](https://github.com/hieugc/url-to-tutorial/issues/7) | TTS VI/EN + SRT | Audio không bị cắt, không lệch cảnh; kiểm tra bằng video thật | Chưa làm |
 | [UTV-006](https://github.com/hieugc/url-to-tutorial/issues/8) | Spike webreel | Driver.js qua navigation, cursor mượt, so sánh video với V1 | Chưa làm |
 | [UTV-007](https://github.com/hieugc/url-to-tutorial/issues/9) | Job persistence | Progress, cancel, retry/resume không lặp tác động | Chưa làm |
