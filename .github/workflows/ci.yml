@@ -64,8 +64,11 @@ jobs:
           retention-days: 7
 
   consolidate-audited-branches:
-    needs: [verify, macos-regression]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Audit + Linux CI must pass before pruning already-merged branch refs.
+    # macOS regression remains independent and is still required for quality acceptance;
+    # unavailable macOS runner capacity must not block safe ref-only housekeeping.
+    needs: [verify]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.verify.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
