@@ -6,7 +6,7 @@
 | [UTV-002](https://github.com/hieugc/url-to-tutorial/issues/4) | Hostinger adapter | Chạy trên site thật, ghi DOM evidence, không bấm thanh toán, duyệt video | Chưa làm |
 | [UTV-010](https://github.com/hieugc/url-to-tutorial/issues/12) | Discovery evidence + multi-page read-only | Status HTTP, screenshot, plan riêng mỗi trang, giới hạn và an toàn điều hướng | CI PASS; local QA pending |
 | [UTV-011](https://github.com/hieugc/url-to-tutorial/issues/13) | Conditional workflow + multi-page assembly | IF/ELSE visible/hidden, forward-only graph, review gate, one continuous MP4 | CI PASS; local QA pending |
-| [UTV-003](https://github.com/hieugc/url-to-tutorial/issues/5) | Studio editor | Nhập URL, sửa/reorder steps, preview, download MP4 | Implemented on feature branch; CI/browser QA pending |
+| [UTV-003](https://github.com/hieugc/url-to-tutorial/issues/5) | Studio editor | Nhập URL, sửa/reorder steps, preview, download MP4 | Merged to main; CI unit+Chromium PASS; macOS/manual QA pending |
 | [UTV-004](https://github.com/hieugc/url-to-tutorial/issues/6) | AI planner có mục tiêu | JSON grounded trong observed DOM; phát hiện task không đủ dữ liệu | Chưa làm |
 | [UTV-005](https://github.com/hieugc/url-to-tutorial/issues/7) | TTS VI/EN + SRT | Audio không bị cắt, không lệch cảnh; kiểm tra bằng video thật | Chưa làm |
 | [UTV-006](https://github.com/hieugc/url-to-tutorial/issues/8) | Spike webreel | Driver.js qua navigation, cursor mượt, so sánh video với V1 | Chưa làm |
