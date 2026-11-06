@@ -43,6 +43,19 @@
         <span>Hostinger: trích xuất giá trực tiếp từ DOM, không chọn gói hay thanh toán.</span>
         <button type="button" class="btn secondary" id="hostinger-guide">Create Hostinger pricing guide</button>
       </div>
+      <div class="goal-shortcut">
+        <div class="field">
+          <label for="goal-text">Mục tiêu hướng dẫn</label>
+          <input id="goal-text" type="text" minlength="4" maxlength="400"
+            placeholder="Ví dụ: Giới thiệu gói Premium hosting">
+          <small>Chỉ chọn các phần tử có trong bằng chứng DOM; không tự tạo click hoặc thanh toán.</small>
+        </div>
+        <label class="goal-ai-toggle" for="goal-ai">
+          <input id="goal-ai" type="checkbox">
+          AI selection (API key trên server)
+        </label>
+        <button type="button" id="goal-generate" class="btn primary">Generate goal draft</button>
+      </div>
     </section>
 
     <div class="toolbar">
