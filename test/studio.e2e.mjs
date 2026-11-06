@@ -29,6 +29,21 @@ const { server } = createStudioServer({
       },
     };
   },
+  goalImpl: async (_url, { outDir }) => {
+    await writeFile(path.join(outDir, 'discovery-page-1.png'),
+      Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL6sAAAAABJRU5ErkJggg==', 'base64'));
+    return {
+      plan: { ...starterPlan, title: 'Goal-based tutorial',
+        steps: [
+          { id: 'goal-intro', title: 'Premium hosting', description: 'Selected from DOM evidence',
+            target: { css: 'h1' }, action: 'highlight', holdMs: 1500 },
+          { id: 'goal-stop', title: 'Stop', description: 'No click', action: 'stop', holdMs: 1500 },
+        ],
+      },
+      evidence: { selectedIds: ['candidate-1'] },
+      report: { status: 'completed', provider: 'offline-keyword' },
+    };
+  },
   hostingerImpl: async (_url, { outDir }) => {
     await writeFile(path.join(outDir, 'hostinger-pricing.png'),
       Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL6sAAAAABJRU5ErkJggg==', 'base64'));
@@ -104,6 +119,14 @@ try {
   assert.equal(await page.locator('#step-action').inputValue(), 'highlight');
   await page.locator('#site-screenshot').waitFor({ state: 'visible' });
   await page.screenshot({ path: path.join(root, 'studio-hostinger.png'), fullPage: true });
+
+  await page.getByLabel('Website URL').fill('https://example.com');
+  await page.getByLabel('Mục tiêu hướng dẫn').fill('Giới thiệu Premium hosting');
+  await page.getByRole('button', { name: /Generate goal draft/ }).click();
+  await page.getByText('Premium hosting', { exact: true }).first().waitFor();
+  await page.locator('#step-title').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#step-action').inputValue(), 'highlight');
+  await page.screenshot({ path: path.join(root, 'studio-goal-planner.png'), fullPage: true });
   assert.deepEqual(uncaught, []);
   console.log(JSON.stringify({ result: 'PASS', pageTitle: await page.title(),
     output: 'output/e2e-studio/studio-editor.png', download: download.suggestedFilename() }));
