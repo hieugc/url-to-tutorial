@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launch, ready } from './browser.mjs';
 import { HttpUrl, Plan } from './plan.mjs';
+import { installPrivacy, assertSafeCapture } from './privacy.mjs';
 
 const BLOCKED_PATH = /(?:^|\/)(?:logout|log-out|signout|sign-out|delete|remove|checkout|payment|purchase|order|cart|unsubscribe|confirm|billing)(?:\/|$)/i;
 const ASSET_PATH = /\.(?:pdf|zip|png|jpe?g|webp|gif|svg|mp4|mov|webm|mp3|css|js)$/i;
@@ -115,7 +116,7 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
   const report = {
     status: 'running', startedAt: new Date().toISOString(),
     entryUrl: url, maxPages, pages: [],
-    note: 'No scripted clicks/fills. Non-GET/HEAD HTTP methods and WebSockets are blocked, but GET requests and page scripts can still cause side effects. Operator-controlled URLs only; screenshots may show private data.',
+    note: 'No scripted clicks/fills. HTTP mutations and WebSockets are blocked; GET/page scripts can still cause side effects. Form inputs and explicitly marked private regions are visually masked, but other visible text may remain sensitive. Use operator-controlled URLs.',
     blockedHttpMutations: 0, blockedWebSockets: 0,
   };
   if (outDir) await mkdir(outDir, { recursive: true });
@@ -131,6 +132,9 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
     context = await browser.newContext({
       viewport: { width: 1280, height: 720 }, serviceWorkers: 'block',
     });
+    // Install the same document-start privacy masking used by video rendering.
+    // It covers form controls and marked fields, NOT arbitrary visible page text.
+    await installPrivacy(context);
     // Intercept sockets BEFORE opening a page: read-only discovery has no
     // reason to establish bidirectional WebSocket sessions.
     await context.routeWebSocket('**/*', ws => {
@@ -182,6 +186,7 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
       visited.add(requestedUrl);
       const entry = { requestedUrl, status: null, finalUrl: null, title: '', candidateCount: 0, candidates: [], outgoingLinks: [], screenshot: null };
       report.pages.push(entry);
+      let safeToScreenshot = false;
       try {
         const response = await page.goto(requestedUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         await ready(page);
@@ -189,6 +194,10 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
         entry.finalUrl = page.url();
         if (new URL(entry.finalUrl).origin !== origin) throw new Error('Redirected to another origin');
         if (entry.status && entry.status >= 400) throw new Error('HTTP ' + entry.status);
+        // Never persist a screenshot of CAPTCHA/MFA/OTP or a frame whose
+        // document-start privacy guard failed to initialize.
+        await assertSafeCapture(page);
+        safeToScreenshot = true;
         const observed = await snapshotPage(page);
         entry.title = observed.title;
         entry.bodyTextLength = observed.bodyTextLength;
@@ -213,7 +222,7 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
         entry.error = refusedRedirect
           ? 'Redirect refused before following target; provide the final canonical URL'
           : error.message;
-        if (outDir && !entry.screenshot) {
+        if (outDir && !entry.screenshot && safeToScreenshot) {
           try {
             entry.screenshot = 'discovery-page-' + report.pages.length + '.png';
             await page.screenshot({ path: path.join(outDir, entry.screenshot) });
