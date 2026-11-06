@@ -56,8 +56,8 @@ try {
   };
   await writeFile(configPath, JSON.stringify(config, null, 2));
   // Keep Webreel optional: it is a separate renderer under test, not part of
-  // the default tutorial pipeline or a runtime dependency.
-  await command('npx', ['--yes', 'webreel@0.1.4', 'install']);
+  // the default tutorial pipeline or a runtime dependency. The pinned CLI
+  // auto-installs its browser/ffmpeg on first use; v0.1.4 has no install command.
   await command('npx', ['--yes', 'webreel@0.1.4', 'record', '--config', configPath]);
 
   const a = await inspectVideo(baseline.video.path);
