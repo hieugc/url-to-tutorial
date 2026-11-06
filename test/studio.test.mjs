@@ -1,6 +1,7 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createStudioServer } from '../src/studio-server.mjs';
@@ -81,8 +82,15 @@ test('Studio serves its HTML and restricts requests to localhost origin', async 
 
   const denied = await post('/api/discover', { url: 'https://sample.test' }, { Origin: 'https://evil.test' });
   assert.equal(denied.status, 403);
-  const wrongHost = await fetch(origin + '/api/health', { headers: { Host: 'evil.test' } });
-  assert.equal(wrongHost.status, 403);
+  // fetch() normalizes the Host header, so send a raw HTTP request instead.
+  const wrongHostStatus = await new Promise((resolve, reject) => {
+    const req = httpRequest({ hostname: '127.0.0.1', port: server.address().port,
+      path: '/api/health', headers: { Host: 'evil.test' } }, res => {
+      res.resume(); res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject); req.end();
+  });
+  assert.equal(wrongHostStatus, 403);
   const notFound = await fetch(origin + '/../../src/plan.mjs');
   assert.equal(notFound.status, 404);
 });
