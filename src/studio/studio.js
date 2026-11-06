@@ -3,6 +3,7 @@ const state = { plan: null, selected: 0, discoveryJobId: null, pages: 0, ready: 
 const ACTIONS = new Set(['click', 'fill', 'navigate']);
 const toastEl = $('toast');
 let toastTimeout;
+let draggedStepId = null;
 
 function toast(message, error = false) {
   toastEl.textContent = message;
@@ -80,6 +81,37 @@ function renderSteps() {
   state.plan.steps.forEach((step, index) => {
     const item = document.createElement('li');
     item.className = 'step-row' + (index === state.selected ? ' active' : '');
+    item.dataset.stepId = step.id;
+    item.draggable = !state.busy;
+    item.addEventListener('dragstart', event => {
+      if (state.busy) return event.preventDefault();
+      draggedStepId = step.id;
+      item.classList.add('dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', step.id);
+    });
+    item.addEventListener('dragover', event => {
+      if (!draggedStepId || draggedStepId === step.id || state.busy) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      item.classList.add('drag-over');
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+    item.addEventListener('drop', event => {
+      if (!draggedStepId || draggedStepId === step.id || state.busy) return;
+      event.preventDefault();
+      const from = state.plan.steps.findIndex(entry => entry.id === draggedStepId);
+      const to = state.plan.steps.findIndex(entry => entry.id === step.id);
+      draggedStepId = null;
+      item.classList.remove('drag-over');
+      reorderStep(from, to);
+    });
+    item.addEventListener('dragend', () => {
+      draggedStepId = null;
+      for (const row of list.querySelectorAll('.step-row')) {
+        row.classList.remove('drag-over', 'dragging');
+      }
+    });
     const choose = document.createElement('button');
     choose.type = 'button';
     choose.className = 'step-choose';
@@ -102,7 +134,12 @@ function renderSteps() {
       ((step.holdMs || 3000) / 1000) + 's' +
       (ACTIONS.has(step.action) ? (step.reviewed ? ' · reviewed' : ' · review needed') : '');
     copy.append(title, meta);
-    choose.append(n, copy);
+    const grip = document.createElement('span');
+    grip.className = 'step-grip';
+    grip.title = 'Drag row to reorder; keyboard users can use Move up/down';
+    grip.textContent = '⋮⋮';
+    grip.setAttribute('aria-hidden', 'true');
+    choose.append(grip, n, copy);
     const controls = document.createElement('div');
     controls.className = 'step-controls';
     controls.append(
@@ -214,17 +251,25 @@ function commitStep(showToast = false) {
   return true;
 }
 
-function moveStep(index, dir) {
+function reorderStep(from, to) {
+  if (state.busy || !state.plan ||
+      from < 0 || to < 0 || from >= state.plan.steps.length ||
+      to >= state.plan.steps.length || from === to) return;
   if (!commitStep()) return;
-  const newIndex = index + dir;
-  if (newIndex < 0 || newIndex >= state.plan.steps.length) return;
   const steps = state.plan.steps;
-  [steps[index], steps[newIndex]] = [steps[newIndex], steps[index]];
-  state.selected = state.selected === index ? newIndex :
-    state.selected === newIndex ? index : state.selected;
+  const selectedId = steps[state.selected]?.id;
+  const [moved] = steps.splice(from, 1);
+  steps.splice(to, 0, moved);
+  state.selected = steps.findIndex(step => step.id === selectedId);
+  // Reordering can invalidate explicit next/branch refs or a terminal stop.
+  // Never carry an earlier Ready status into the reordered execution graph.
   invalidate();
   renderSteps();
   renderSelected();
+}
+
+function moveStep(index, dir) {
+  reorderStep(index, index + dir);
 }
 
 function deleteStep(index) {
@@ -242,6 +287,7 @@ function loadPlan(plan, options = {}) {
     throw new Error('Plan must contain a non-empty steps array');
   }
   state.plan = structuredClone(plan);
+  draggedStepId = null;
   state.selected = 0;
   if (options.discoveryJobId !== undefined) state.discoveryJobId = options.discoveryJobId;
   if (options.pages !== undefined) state.pages = options.pages;
@@ -249,7 +295,7 @@ function loadPlan(plan, options = {}) {
   $('export').disabled = false;
   $('add').disabled = false;
   $('validate').disabled = false;
-  $('step-note').textContent = 'Sử dụng mũi tên để thay đổi thứ tự. Nhấn Save step trước khi chuyển bước.';
+  $('step-note').textContent = 'Kéo thả từng bước để đổi thứ tự, hoặc dùng nút ↑/↓ bằng bàn phím. Luôn Validate lại trước khi chạy.';
   invalidate();
   updateMeta();
   renderSteps();
