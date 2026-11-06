@@ -77,6 +77,13 @@ Discovery blocks cross-origin main-frame navigation and **all main-document redi
 
 The GitHub Actions workflow now runs Linux Chromium/FFmpeg, Xvfb-backed manual-session/iframe tests, Webreel A/B, public discovery and a separate macOS compatibility job. A GitHub macOS runner is **not** the user's M3 MacBook; local visual review, M3 CPU/RAM and audio listening remain human acceptance items.
 
+### Contribution / merge branch lifecycle
+
+Use a scoped `feat/`, `fix/`, `chore/` or `test/` branch for each task. Open a PR against `main`, review the diff, and require both **Linux verify** and **macOS regression** on the final PR head before merging. GitHub Actions supersedes outdated runs for the same branch/event, but keeps push and pull-request runs separate so one cannot cancel the other's acceptance evidence.
+
+On merging a same-repository PR into `main`, `.github/workflows/pr-branch-cleanup.yml` deletes its source branch **only if** the branch still points to the exact merged PR head SHA. A moved branch or a fork branch is left untouched. Check the cleanup workflow result and branch list before treating deletion as complete. This automation never closes outstanding manual QA issues.
+
+
 ## Studio Editor (local-only, v0.2)
 
 Bản Studio có giao diện trình duyệt để khám phá trang web, chỉnh sửa và sắp xếp các bước, thêm action `highlight`, `click`, `fill`, `navigate`, `branch`, `stop`; import/export plan JSON; validate; preview và render MP4.

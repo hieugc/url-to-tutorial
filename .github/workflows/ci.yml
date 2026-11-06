@@ -1,5 +1,13 @@
 name: Verify tutorial pipeline
 on: [push, pull_request, workflow_dispatch]
+
+# Supersede obsolete commits within the same event/ref, but never let a push
+# cancel the required pull_request checks (or vice versa). The latest head
+# must still pass both Linux and macOS before an operator merges the PR.
+concurrency:
+  group: tutorial-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:
