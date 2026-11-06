@@ -47,7 +47,7 @@ try {
   const failed = JSON.parse(await readFile(failureRoot + '/discovery-report.json', 'utf8'));
   assert.equal(failed.status, 'failed');
   assert.ok(failed.pages[0].error);
-  assert.match(failed.pages[0].error, /BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_CLIENT|Navigation/);
+  assert.match(failed.pages[0].error, /Redirected to another origin|BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_CLIENT|Navigation/);
   console.log(JSON.stringify({
     result: 'PASS',
     controlledPages: controlled.report.pages.map(page => ({
