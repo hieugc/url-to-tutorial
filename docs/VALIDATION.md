@@ -79,3 +79,12 @@ Mã nguồn không bao gồm node_modules, output chứa dữ liệu website, se
 - Live observed 4 pricing tiers (Premium, Đơn, Không giới hạn, Cloud Startup), plus a terminal `stop-before-checkout` step. Live MP4: H.264 1280×720, 37.16 s, no audio. All 5 runtime steps completed.
 - Live screenshot, JSON DOM evidence, plan, per-step screenshots, runtime report and MP4: https://github.com/hieugc/url-to-tutorial/actions/runs/42186344248/artifacts/13488320183 (7-day retention).
 - Still pending: manual **visual** review of exported live video and pricing excerpts, full responsive/mobile check, and user MacBook M3 QA. GitHub runner IP/location and promotions may differ from user's local browser. No purchase/checkout or login was automated.
+
+
+## UTV-004 goal-grounded planner — initial implementation pending CI (2026-11-06)
+
+- Implementation: `src/goal-planner.mjs`, CLI `goal <url> --goal '...' [--ai]`, Studio `POST /api/goal` and source-goal UI.
+- Unit tests: evidence-bound IDs, non-matching goals fail-closed, no selectors sent to model, fake Responses API JSON schema, hallucinated/duplicate IDs rejected.
+- Chromium fixture E2E: anonymous public demo, goal selection, read-only plan, H.264 render, zero checkout requests.
+- AI provider requires `OPENAI_API_KEY` and sends public UI labels to API; **no live billable model call has been made in CI**.
+- Existing UTV-004 issue remains OPEN until source-grounding QA, live model test and user acceptance.
