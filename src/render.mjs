@@ -217,6 +217,11 @@ export async function render(input, {
     report.error = cancelled ? 'Cancelled by operator' : error.message;
     const last = report.steps.at(-1);
     if (last && last.status === 'running') last.status = cancelled ? 'cancelled' : 'failed';
+    if (cancelled) {
+      const aborted = new Error('Operation cancelled by operator');
+      aborted.name = 'AbortError';
+      throw aborted;
+    }
     throw error;
   } finally {
     signal?.removeEventListener('abort', abortHandler);

@@ -180,7 +180,7 @@ export function goalPlanFromSelection({
 }
 
 export async function createGoalGuide(url, {
-  goal, outDir, language = 'vi', ai = false, exploreImpl = explore, selectImpl = selectWithOpenAI,
+  goal, outDir, language = 'vi', ai = false, exploreImpl = explore, selectImpl = selectWithOpenAI, signal,
 } = {}) {
   if (typeof goal !== 'string' || goal.trim().length < 4 || goal.length > 400) {
     throw new Error('Enter a specific goal (4–400 characters)');
@@ -196,7 +196,7 @@ export async function createGoalGuide(url, {
   };
   let evidence = null;
   try {
-    const discovery = await exploreImpl(url, { outDir: root, language, maxPages: 1 });
+    const discovery = await exploreImpl(url, { outDir: root, language, maxPages: 1, signal });
     const source = candidatesFromDiscovery(discovery);
     if (signal?.aborted) throw Object.assign(new Error('Goal planning cancelled'), { name: 'AbortError' });
     const selection = ai
