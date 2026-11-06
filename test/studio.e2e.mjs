@@ -142,6 +142,29 @@ try {
   assert.equal(await page.locator('#render').isEnabled(), false,
     'Restored plan must require validation; never auto-execute actions');
 
+  // Drag & drop reorders the plan, preserves the selected step, and revokes
+  // execution readiness until the new graph has been validated.
+  await page.getByRole('button', { name: '+ Add step' }).click();
+  const insertedId = await page.locator('#step-id').inputValue();
+  assert.match(insertedId, /^step-/);
+  await page.getByRole('button', { name: 'Validate' }).click();
+  await page.getByText('Ready to preview / render').waitFor();
+  assert.equal(await page.locator('#render').isEnabled(), true);
+  const dragged = page.locator('#steps .step-row[data-step-id="' + insertedId + '"]');
+  const target = page.locator('#steps .step-row[data-step-id="intro"]');
+  await dragged.dragTo(target);
+  assert.equal(await page.locator('#steps .step-row').first().getAttribute('data-step-id'), insertedId);
+  assert.equal(await page.locator('#step-id').inputValue(), insertedId,
+    'The selected step must remain selected after reordering');
+  assert.equal(await page.locator('#render').isEnabled(), false,
+    'Any drag reorder must revoke the previous Ready state');
+  await page.getByRole('button', { name: 'Validate' }).click();
+  await page.getByText('Ready to preview / render').waitFor();
+  await page.getByRole('button', { name: 'Move ' + insertedId + ' down' }).click();
+  assert.equal(await page.locator('#steps .step-row').first().getAttribute('data-step-id'), 'intro');
+  assert.equal(await page.locator('#render').isEnabled(), false,
+    'The keyboard-accessible Move down path must also revoke Ready');
+
   const previousRender = page.locator('#history-list .history-row')
     .filter({ hasText: 'render · completed' }).first();
   await previousRender.getByRole('button', { name: /Open render job/ }).click();
