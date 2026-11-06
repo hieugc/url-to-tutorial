@@ -165,6 +165,16 @@ try {
   assert.equal(await page.locator('#render').isEnabled(), false,
     'The keyboard-accessible Move down path must also revoke Ready');
 
+  // Moving the terminal stop before regular steps must NOT bypass the
+  // existing forward-only plan validator even when the drag itself succeeds.
+  await page.locator('#steps .step-row[data-step-id="finish"]').dragTo(
+    page.locator('#steps .step-row[data-step-id="intro"]'));
+  await page.getByRole('button', { name: 'Validate' }).click();
+  await page.getByText(/Invalid plan/).waitFor();
+  assert.ok(await page.locator('#issues li').count() >= 1,
+    'Terminal stop ordering should be explained in the readiness panel');
+  assert.equal(await page.locator('#render').isEnabled(), false);
+
   const previousRender = page.locator('#history-list .history-row')
     .filter({ hasText: 'render · completed' }).first();
   await previousRender.getByRole('button', { name: /Open render job/ }).click();
