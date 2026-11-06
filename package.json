@@ -15,7 +15,8 @@
     "test:e2e": "node test/e2e.mjs",
     "studio": "node src/studio-server.mjs",
     "test:studio:e2e": "node test/studio.e2e.mjs",
-    "test:hostinger:e2e": "node test/hostinger.e2e.mjs"
+    "test:hostinger:e2e": "node test/hostinger.e2e.mjs",
+    "test:goal:e2e": "node test/goal.e2e.mjs"
   },
   "keywords": [],
   "author": "",
