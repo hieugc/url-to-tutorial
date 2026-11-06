@@ -20,6 +20,23 @@ Studio chạy trên `127.0.0.1:4173`; không expose qua public internet, tunnel 
 
 Tính năng hiện có: form editor, thay đổi thứ tự bằng nút ↑/↓, JSON nâng cao, danh sách lỗi schema/review, xem ảnh snapshot sau discover, job status, link tải MP4. Nếu chuyển thứ tự làm sai luồng branch, validator sẽ báo lỗi. Job chỉ lưu trong RAM trong phiên chạy; công việc đang chạy không thể resume sau restart. Trình duyệt mới mở trên máy (preview headed) cần môi trường desktop. Chưa có drag-and-drop trực tiếp, AI planner, TTS, lưu project nhiều phiên, hoặc cloud multiuser.
 
+## Hostinger Adapter — giới thiệu bảng giá không mua hàng
+
+Có thể tạo **kịch bản giới thiệu các gói Hostinger** theo DOM đang hiển thị, không hardcode giá và không tự bấm nút mua. Adapter chỉ nhận URL HTTPS thuộc `hostinger.com` hoặc `www.hostinger.com` với đường dẫn `/vn` và không có query string.
+
+```bash
+npm run tutorial -- hostinger 'https://www.hostinger.com/vn#pricing' --out output/hostinger-pricing
+npm run tutorial -- validate output/hostinger-pricing/plan.json
+npm run tutorial -- render output/hostinger-pricing/plan.json --out output/hostinger-render
+open output/hostinger-render/tutorial.mp4
+```
+
+Sau lệnh đầu sẽ có `plan.json`, `hostinger-evidence.json`, `hostinger-pricing.png`. Ảnh chụp tập trung vào gói Premium (nếu quan sát được); báo cáo ghi tên gói, giá tháng, thông tin thanh toán, giá gia hạn, tính năng và selector thực tế. Nếu không trích được một thông số, plan **không tự đoán** và có cảnh báo. Nếu bảng giá không có trong trang chủ, adapter thử đọc trang `/vn/web-hosting` **cùng nhà cung cấp**, ghi rõ URL trong evidence. Không click, không nhận cookie, không đăng nhập, không sang checkout.
+
+Trong Studio tại `http://127.0.0.1:4173`, nhập URL Hostinger rồi bấm **Create Hostinger pricing guide**. Chỉnh sửa plan, Validate, Preview hoặc Render. Kiểm tra lại giá, tổng tiền trước VAT, kỳ hạn và gia hạn trước khi chia sẻ video. Site production có thể thay đổi DOM, cookie banner hoặc chặn browser tự động; trường hợp đó adapter dừng và lưu bằng chứng để xử lý thủ công, không hứa hỗ trợ mọi phiên bản.
+
+**Tình trạng:** Code adapter + fixture testing không thay thế kiểm thử Hostinger production thật. Không dùng giá trong fixture làm dữ liệu tư vấn thực tế.
+
 ## Chạy nhanh
 
 Yêu cầu: Node.js 22+, FFmpeg/ffprobe, Chromium của Playwright. Trên macOS: `brew install node ffmpeg` nếu chưa có.
