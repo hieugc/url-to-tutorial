@@ -69,3 +69,11 @@ MacBook M3 16 GB phù hợp để bắt đầu với 1 Chromium worker, 720p ho�
 - Control flow: `branch` evaluates a visible/hidden locator and selects `onTrue` or `onFalse`; `next` joins paths. Edges are forward-only, every step must be reachable, and render has a step-count guard.
 - Review gate: plans may contain draft click/fill/navigate actions, but validate, preview, and render reject them until `reviewed: true` is explicitly set.
 - Multi-page: read-only discovery plans can be assembled into one task plan. Reviewed same-origin `navigate` steps reuse the same page and video recording session. New tabs/popups remain unsupported and fail explicitly.
+
+## Studio Editor v0.2 — local implementation
+
+Thay vì tạo React/Vite mới, giao diện đầu tiên dùng HTML/CSS/JS thuần để tận dụng Node + Playwright sẵn có, không tăng dependency. `src/studio-server.mjs` bind 127.0.0.1, phục vụ giao diện và API giới hạn theo origin/Host; mọi job được xếp hàng tuần tự với 4 job pending tối đa. Job status trong RAM, render output trong `output/studio/<jobId>`.
+
+Các route đã thực hiện: `POST /api/discover`, `POST /api/assemble`, `POST /api/validate`, `POST /api/preview`, `POST /api/render`, `GET /api/jobs/:id`, `GET /api/jobs/:id/video`, `GET /api/jobs/:id/screenshot/:page`, `GET /api/health`. Studio không thay đổi format plan JSON hiện tại.
+
+Bảo mật: server không bind public interface, kiểm tra Host và Origin, CSP, Content-Type JSON, giới hạn body và queue, chỉ phục vụ danh sách file static và tên artifact từ jobId sinh server. **Đây không phải backend phục vụ Internet:** chưa có auth, egress denylist, sandbox web worker, persistence, CSRF token độc lập, quota đa tenant hay chống lạm dụng SSRF trong target website. Người vận hành phải tự kiểm soát URL đầu vào.
