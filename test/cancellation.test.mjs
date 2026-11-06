@@ -64,8 +64,9 @@ test('Running render job supports cooperative cancellation and persists terminal
     assert.equal(created.status, 202);
     const id = (await created.json()).jobId;
     await didStart;
+    // Browser API clients may send POST without a JSON body.
     const response = await fetch(origin + '/api/jobs/' + id + '/cancel', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      method: 'POST',
     });
     assert.equal(response.status, 202);
     assert.equal((await response.json()).status, 'cancelling');

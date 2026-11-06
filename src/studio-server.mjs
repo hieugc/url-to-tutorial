@@ -328,7 +328,11 @@ export function createStudioServer({
       }
 
       if (req.method !== 'POST') return json(res, 404, { error: 'Unknown route' });
-      const body = await bodyJson(req);
+      // Cancel and retry are control operations: the job ID is in the path and
+      // there is no required JSON payload. Keep accepting the legacy {} body
+      // sent by Studio, but also support a plain POST with no Content-Type.
+      const jobControl = /^\/api\/jobs\/[a-f0-9-]{36}\/(?:cancel|retry)$/i.test(pathname);
+      const body = jobControl && !req.headers['content-type'] ? {} : await bodyJson(req);
       const requestKey = idempotencyKey(req);
 
       const cancelMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/cancel$/i);
