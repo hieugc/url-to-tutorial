@@ -62,6 +62,9 @@ export const Plan = z.object({
     height: z.number().int().min(360).max(1080).refine(n => n % 2 === 0),
   }).default({ width: 1280, height: 720 }),
   steps: z.array(Step).min(1).max(50),
+  // Locally supplied selectors to hide sensitive page fragments before video
+  // recording. These are NEVER generated automatically by an LLM.
+  redactSelectors: z.array(z.string().min(1).max(200)).max(20).optional(),
 }).strict().superRefine((p, ctx) => {
   const ids = p.steps.map(s => s.id);
   if (new Set(ids).size !== ids.length)

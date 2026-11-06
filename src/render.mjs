@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { launch, ready } from './browser.mjs';
 import { Plan, uniqueTarget, evaluateCondition, validatePlanForExecution } from './plan.mjs';
 import { showStep, hideStep } from './overlay.mjs';
+import { installPrivacy, assertSafeCapture } from './privacy.mjs';
 
 export function command(program, args) {
   return new Promise((resolve, reject) => {
@@ -45,8 +46,13 @@ export async function render(input, { outDir, headed = false, preview = false } 
       locale: plan.language === 'vi' ? 'vi-VN' : 'en-US',
       ...(!preview ? { recordVideo: { dir: path.join(root, 'raw'), size: plan.viewport } } : {}),
     });
+    // A fresh incognito browser context is created for every render job.
+    // Privacy scripts execute before DOM paint, not merely before screenshots.
+    await installPrivacy(context, plan.redactSelectors || []);
     const page = await context.newPage();
     video = page.video();
+    report.recordingStartedAt = new Date().toISOString();
+    await saveReport();
     // Extra tabs are unsupported; don't silently produce an incorrect walkthrough.
     let popup = false;
     context.on('page', newPage => {
@@ -57,6 +63,7 @@ export async function render(input, { outDir, headed = false, preview = false } 
     });
     await page.goto(plan.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await ready(page);
+    await assertSafeCapture(page);
 
     const indexById = new Map(plan.steps.map((step, index) => [step.id, index]));
     let currentIndex = 0;
@@ -74,8 +81,12 @@ export async function render(input, { outDir, headed = false, preview = false } 
       report.steps.push(entry);
       await saveReport();
 
+      await assertSafeCapture(page);
       const locator = step.target ? await uniqueTarget(page, step.target) : undefined;
-      await showStep(page, locator, step, currentIndex, plan.steps.length);
+      await showStep(page, locator, step, currentIndex, plan.steps.length, async () => {
+        entry.narrationStartAt = new Date().toISOString();
+        await saveReport();
+      });
       await page.screenshot({ path: path.join(root, 'step-' + report.steps.length + '.png') });
       await hideStep(page);
 
@@ -86,6 +97,7 @@ export async function render(input, { outDir, headed = false, preview = false } 
         entry.navigatedTo = page.url();
       }
       await ready(page);
+      await assertSafeCapture(page);
       if (popup) throw new Error('New-tab navigation is not supported by this MVP');
       if (step.expected) await uniqueTarget(page, step.expected);
 

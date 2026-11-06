@@ -320,6 +320,8 @@ function showJob(title, detail) {
   $('output-title').textContent = title;
   $('output-detail').textContent = detail;
   $('download').hidden = true;
+  $('srt-download').hidden = true;
+  $('vtt-download').hidden = true;
 }
 async function awaitJob(jobId, title) {
   for (let attempt = 0; attempt < 480; attempt++) {
@@ -432,6 +434,7 @@ async function execute(type) {
     const job = await api('/api/' + type, {
       plan: state.plan,
       confirmedExecution: actionable,
+      narrate: type === 'render' && $('narrate').checked,
     });
     const result = await awaitJob(job.jobId, type === 'render' ? 'Rendering MP4' : 'Previewing walkthrough');
     showJob(type === 'render' ? 'MP4 ready' : 'Preview finished',
@@ -439,6 +442,12 @@ async function execute(type) {
     if (result.videoUrl) {
       $('download').href = result.videoUrl;
       $('download').hidden = false;
+    }
+    if (result.subtitleUrls) {
+      $('srt-download').href = result.subtitleUrls.srt;
+      $('vtt-download').href = result.subtitleUrls.vtt;
+      $('srt-download').hidden = false;
+      $('vtt-download').hidden = false;
     }
     toast(type === 'render' ? 'Video completed' : 'Preview completed');
   } catch (error) { toast(error.message, true); showJob('Job failed', error.message); }

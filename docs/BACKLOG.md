@@ -8,10 +8,10 @@
 | [UTV-011](https://github.com/hieugc/url-to-tutorial/issues/13) | Conditional workflow + multi-page assembly | IF/ELSE visible/hidden, forward-only graph, review gate, one continuous MP4 | CI PASS; local QA pending |
 | [UTV-003](https://github.com/hieugc/url-to-tutorial/issues/5) | Studio editor | Nhập URL, sửa/reorder steps, preview, download MP4 | Merged to main; CI unit+Chromium PASS; macOS/manual QA pending |
 | [UTV-004](https://github.com/hieugc/url-to-tutorial/issues/6) | AI planner có mục tiêu | JSON grounded trong observed DOM; phát hiện task không đủ dữ liệu | PR #16 merged; offline + mocked AI/Chromium CI PASS; live model/Mac QA pending |
-| [UTV-005](https://github.com/hieugc/url-to-tutorial/issues/7) | TTS VI/EN + SRT | Audio không bị cắt, không lệch cảnh; kiểm tra bằng video thật | Chưa làm |
-| [UTV-006](https://github.com/hieugc/url-to-tutorial/issues/8) | Spike webreel | Driver.js qua navigation, cursor mượt, so sánh video với V1 | Chưa làm |
-| [UTV-007](https://github.com/hieugc/url-to-tutorial/issues/9) | Job persistence | Progress, cancel, retry/resume không lặp tác động | Chưa làm |
-| [UTV-008](https://github.com/hieugc/url-to-tutorial/issues/10) | Login/privacy/iframe | Che dữ liệu trước capture, session riêng, adapter iframe rõ ràng | Chưa làm |
-| [UTV-009](https://github.com/hieugc/url-to-tutorial/issues/11) | Cloud API | Auth, isolation, SSRF/egress policy, quota, storage lifecycle | Chưa làm |
+| [UTV-005](https://github.com/hieugc/url-to-tutorial/issues/7) | TTS VI/EN + SRT | Audio không bị cắt, không lệch cảnh; kiểm tra bằng video thật | TTS VI/EN + AAC/SRT/VTT implemented (eSpeak NG); CI and manual A/V sync pending |
+| [UTV-006](https://github.com/hieugc/url-to-tutorial/issues/8) | Spike webreel | Driver.js qua navigation, cursor mượt, so sánh video với V1 | FFprobe frame-timing baseline implemented; Webreel A/B + Mac CPU/RAM pending |
+| [UTV-007](https://github.com/hieugc/url-to-tutorial/issues/9) | Job persistence | Progress, cancel, retry/resume không lặp tác động | SQLite history, safe read-only retry, queued cancellation implemented; live cancel/QA pending |
+| [UTV-008](https://github.com/hieugc/url-to-tutorial/issues/10) | Login/privacy/iframe | Che dữ liệu trước capture, session riêng, adapter iframe rõ ràng | Field redaction + OTP/CAPTCHA stop + isolated browser contexts implemented; authenticated login/iframe QA pending |
+| [UTV-009](https://github.com/hieugc/url-to-tutorial/issues/11) | Cloud API | Auth, isolation, SSRF/egress policy, quota, storage lifecycle | DNS/IP preflight helper and cloud threat model only; public API NOT deployed; security QA pending |
 
 Không đánh dấu DONE dựa vào build hoặc file tồn tại. Mỗi mục liên quan browser/video cần bằng chứng runtime và quan sát hình/video. Backlog được theo dõi qua [GitHub Issues](https://github.com/hieugc/url-to-tutorial/issues). Chỉ đóng issue khi đã đáp ứng đủ tiêu chí nghiệm thu và có bằng chứng kiểm thử; các vấn đề QA MacBook được giữ OPEN dù CI đã PASS.

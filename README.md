@@ -2,7 +2,36 @@
 
 Nhập URL → tạo kịch bản chỉnh sửa được → Driver.js spotlight → video MP4.
 
-MVP local-first cho hướng dẫn sử dụng website, bắt nguồn từ bài toán quay video hướng dẫn mua hosting. Có demo hosting giả lập, không giao dịch thật. **Đây là CLI MVP, chưa phải studio AI hoàn chỉnh.**
+MVP local-first cho hướng dẫn sử dụng website, bắt nguồn từ bài toán quay video hướng dẫn mua hosting. Có demo hosting giả lập, không giao dịch thật. **Đã có Studio local và goal planner; chưa phải SaaS AI production hoàn chỉnh.**
+
+## Batch UTV-005–009 — narration, persistence and safety
+
+**UTV-005 – Offline voiceover + subtitles.** Use [eSpeak NG](https://github.com/espeak-ng/espeak-ng) voices (Vietnamese: `vi`, English: `en`), with durations measured from actual WAV files using FFprobe. FFmpeg mixes AAC narration into H.264 MP4 and writes `tutorial.srt` / `tutorial.vtt` synchronized to actual executed steps, including IF/ELSE paths. Each step has a 30-second maximum to prevent silently clipped voice recordings.
+
+Install on macOS: `brew install espeak-ng ffmpeg`. Ubuntu: `sudo apt-get install espeak-ng ffmpeg`. eSpeak NG voices can sound robotic. Its source and bundled voice resources have GPL and other licensing requirements; review [upstream licensing](https://github.com/espeak-ng/espeak-ng) before redistributing binaries or voice data. This app calls the locally installed executable and does not bundle voice files.
+
+```bash
+npm run tutorial -- render output/my-guide/plan.json --narrate --out output/narrated-guide
+npm run demo -- --narrate --out output/narrated-demo
+```
+
+Studio has **TTS VI/EN + subtitles** beside Render MP4 and separate MP4/SRT/VTT download links. The existing plan remains editable and unchanged. No cloud TTS API key or GPU is needed.
+
+**UTV-007 – SQLite job history.** `output/studio/studio-jobs.sqlite` stores job status and redacted plan snapshots. A Studio restart marks unfinished jobs `interrupted` and **never** replays browser actions. `GET /api/jobs` lists history. `POST /api/jobs/:id/cancel` cancels queued jobs only. `POST /api/jobs/:id/retry` permits only failed/cancelled/interrupted read-only discovery, Hostinger or **offline** goal jobs. Active in-flight browser jobs are not yet safely cancellable. Finished metadata/artifacts older than 15 days are cleaned at Studio startup, not by a background service. Values from `fill` actions are redacted from saved snapshots; do not place secrets in any source plan.
+
+**UTV-008 – Privacy baseline.** Each render uses an isolated fresh browser context. A document-start script masks displayed form values (input/textarea/select/contenteditable) and hides `[data-sensitive]` / `[data-private]` regions. The plan can provide up to 20 CSS `redactSelectors`. A visible CAPTCHA/MFA/OTP challenge halts capture. Cross-origin iframe targets and popups remain unsupported. This does **not** certify arbitrary authenticated sites as private: ordinary page text outside marked regions may remain visible.
+
+**UTV-006 – File-level capture benchmark.** FFprobe measures actual decoded-frame timestamps, FPS and inter-frame jitter on an existing video:
+
+```bash
+npm run benchmark -- output/e2e-demo/tutorial.mp4
+# Optional A/B after recording the same fixture separately with Webreel:
+npm run benchmark -- output/playwright.mp4 output/webreel.mp4 output/comparison.json
+```
+
+This does **not** integrate Webreel or establish true browser-rendering FPS or Mac CPU/RAM use. A comparable Webreel capture remains an open QA task.
+
+**UTV-009 – Cloud API not enabled.** `src/cloud-egress.mjs` has a public URL/DNS preflight helper and tests but is **not** a complete SSRF defense. Redirects, browser subrequests and DNS rebinding require real network egress isolation in a separate worker. Current Studio only binds to 127.0.0.1 without public auth, tenant isolation or billing. **Do not expose it on the internet.** See [security design](docs/CLOUD-SECURITY.md).
 
 ## Studio Editor (local-only, v0.2)
 
@@ -132,7 +161,7 @@ E2E khởi chạy website fixture cục bộ, kiểm tra URL discovery → rende
 - Website đổi DOM có thể làm selector tự sinh không còn đúng. Dùng role + tên chính xác hoặc id ổn định cho kịch bản quan trọng; không tự chọn phần tử đầu tiên nếu selector trùng.
 - Chỉ tài liệu chính, chưa hỗ trợ iframe, popup, session đăng nhập, CAPTCHA, file upload và nhiều tab. Site CSP chặn injection thì báo lỗi; không hạ bảo mật của site.
 - Có chuyển động con trỏ và cuộn mượt, nhưng Playwright video không phải trình render timeline cố định 60 fps. Không biến video 25 fps thành “60 fps thật” bằng cách chỉ đổi thông số encode.
-- Hiện chưa có AI planner, giọng đọc, phụ đề SRT, timeline editor, queue/resume/cancel, API HTTP hay SaaS multi-tenant.
+- Hiện đã có Studio HTTP cục bộ, goal planner offline/optional AI, TTS VI/EN, SQLite job history và hủy queued-job; chưa có SaaS multi-tenant, active cancel hoặc GUI timeline hoàn chỉnh.
 - CLI được chạy trên máy cá nhân với URL do người vận hành tin cậy. Không expose CLI thành dịch vụ công khai nhận URL tùy ý; cloud worker cần cách ly mạng/SSRF/credentials trước.
 
 Xem [kiến trúc và API dự kiến](docs/ARCHITECTURE.md), [đánh giá repo có sẵn](docs/REUSE.md), [backlog](docs/BACKLOG.md) và [kết quả kiểm tra](docs/VALIDATION.md).

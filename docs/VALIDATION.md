@@ -97,3 +97,18 @@ Mã nguồn không bao gồm node_modules, output chứa dữ liệu website, se
 - Artifact: https://github.com/hieugc/url-to-tutorial/actions/runs/42187732082/artifacts/13488651393, contains fixture H.264 output, screenshot/evidence and regression outputs.
 - API verification uses a **fake fetch response** for Structured Outputs. No live OpenAI API key was configured, no billable model call was made, and no claim of model quality or production performance is established.
 - Remaining acceptance: manual MacBook review, actual model-backed API test with authorized key, and privacy/prompt-injection evaluation on trusted websites. Issue #6 stays OPEN.
+
+
+## Batch UTV-005–009 — candidate build (2026-11-06)
+
+This batch is **not VERIFIED until a single full GitHub Actions run reaches SUCCESS**. It includes:
+
+- UTV-005: locally installed eSpeak NG for VI/EN narration; FFprobe measured audio duration; dynamic hold padding; runtime narration timestamps; FFmpeg H.264/AAC output; SRT/VTT. Unit and VI/EN Chromium E2E with FFprobe are included.
+- UTV-007: experimental Node 22+ built-in SQLite stores bounded job history; interrupted running jobs are not auto-replayed. Queued cancel and safe read-only retry only. Test covers restart, queued cancel and plaintext fill redaction.
+- UTV-008: document-start form text masking, explicit selector redaction, OTP/CAPTCHA stop, new private browser context for every render. Chromium E2E verifies dynamic field masking and safe stop.
+- UTV-006: FFprobe baseline frame-spacing statistics and optional supplied A/B comparison. No Webreel runtime integration yet.
+- UTV-009: non-production public URL/DNS guard and threat-model documentation. NO public Cloud API, tenant login, billing, or full SSRF protection.
+
+**Still OPEN even after CI:** manual MacBook visual/audio QA (listening to both VI/EN outputs), real Webreel capture, graceful in-flight browser cancellation, real authenticated session consent/iframe handling, production cloud security validation. Do not mark those requirements DONE from fixture tests alone.
+
+Unit tests: `npm test`. Browser tests: `npm run test:e2e`, `npm run test:studio:e2e`, `npm run test:hostinger:e2e`, `npm run test:goal:e2e`, `npm run test:narration:e2e`, `npm run test:privacy:e2e`. Baseline analysis: `npm run benchmark -- output/e2e-demo/tutorial.mp4`.

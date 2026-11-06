@@ -14,12 +14,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
       - run: npm test
       - run: npm run test:e2e
       - run: npm run test:studio:e2e
       - run: npm run test:hostinger:e2e
       - run: npm run test:goal:e2e
+      - run: npm run test:narration:e2e
+      - run: npm run test:privacy:e2e
+      - run: npm run benchmark -- output/e2e-demo/tutorial.mp4
       - uses: actions/upload-artifact@v4
         if: always()
         with:

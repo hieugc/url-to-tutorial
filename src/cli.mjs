@@ -8,12 +8,14 @@ import { createGoalGuide } from './goal-planner.mjs';
 import { createHostingerGuide } from './adapters/hostinger.mjs';
 import { assembleDiscovery } from './assemble.mjs';
 import { render } from './render.mjs';
+import { renderNarrated } from './narration.mjs';
 import { Plan, validatePlanForExecution } from './plan.mjs';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   out: { type: 'string' }, headed: { type: 'boolean', default: false }, language: { type: 'string', default: 'vi' },
   'max-pages': { type: 'string', default: '1' },
   goal: { type: 'string' }, ai: { type: 'boolean', default: false },
+  narrate: { type: 'boolean', default: false },
 } });
 const [action, input] = positionals;
 const outDir = values.out || 'output/' + new Date().toISOString().replace(/[:.]/g, '-');
@@ -33,7 +35,7 @@ try {
     }
     console.log('Discovery evidence: ' + path.join(outDir, 'discovery-report.json'));
     console.log('Plan: ' + outDir + '/plan.json (overview; no automatic clicks)');
-    if (action === 'run') console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
+    if (action === 'run') console.log(JSON.stringify(await (values.narrate ? renderNarrated : render)(plan, { outDir, headed: values.headed }), null, 2));
   } else if (action === 'goal') {
     const { plan, report } = await createGoalGuide(input, {
       goal: values.goal, language: values.language, ai: values.ai, outDir,
@@ -69,7 +71,8 @@ try {
       if (issues.length) throw new Error('Plan is structurally valid but not ready to execute:\n- ' + issues.join('\n- '));
       console.log('Valid and reviewed plan: ' + plan.steps.length + ' steps');
     } else {
-      console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed, preview: action === 'preview' }), null, 2));
+      const runner = values.narrate && action === 'render' ? renderNarrated : render;
+      console.log(JSON.stringify(await runner(plan, { outDir, headed: values.headed, preview: action === 'preview' }), null, 2));
     }
   } else if (action === 'demo') {
     const html = await readFile(new URL('../examples/demo.html', import.meta.url));
@@ -80,10 +83,10 @@ try {
       plan.url = 'http://127.0.0.1:' + server.address().port;
       await mkdir(outDir, { recursive: true });
       await writeFile(path.join(outDir, 'plan.json'), JSON.stringify(plan, null, 2));
-      console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
+      console.log(JSON.stringify(await (values.narrate ? renderNarrated : render)(plan, { outDir, headed: values.headed }), null, 2));
     } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   } else {
-    console.log('Commands: goal <url> --goal <text> [--ai] | hostinger <https://www.hostinger.com/vn#pricing> | discover <url> | assemble <discovery-dir> | run <url> | validate <plan.json> | preview <plan.json> | render <plan.json> | demo\nOptions: --out output/name --headed --language vi|en --max-pages 1..5');
+    console.log('Commands: goal <url> --goal <text> [--ai] | hostinger <https://www.hostinger.com/vn#pricing> | discover <url> | assemble <discovery-dir> | run <url> | validate <plan.json> | preview <plan.json> | render <plan.json> | demo\nOptions: --out output/name --headed --language vi|en --max-pages 1..5 --narrate');
     if (action) process.exitCode = 1;
   }
 } catch (error) { console.error(error.message); process.exitCode = 1; }

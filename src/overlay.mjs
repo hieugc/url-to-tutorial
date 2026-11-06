@@ -18,7 +18,7 @@ export async function installOverlay(page) {
   });
 }
 
-export async function showStep(page, locator, step, index, total) {
+export async function showStep(page, locator, step, index, total, onVisible = undefined) {
   await installOverlay(page);
   if (locator) {
     await locator.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
@@ -40,6 +40,7 @@ export async function showStep(page, locator, step, index, total) {
       title: escapeHtml(step.title), description: escapeHtml(step.description),
     });
   }
+  if (onVisible) await onVisible();
   await page.waitForTimeout(step.holdMs);
 }
 

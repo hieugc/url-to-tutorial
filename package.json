@@ -16,7 +16,10 @@
     "studio": "node src/studio-server.mjs",
     "test:studio:e2e": "node test/studio.e2e.mjs",
     "test:hostinger:e2e": "node test/hostinger.e2e.mjs",
-    "test:goal:e2e": "node test/goal.e2e.mjs"
+    "test:goal:e2e": "node test/goal.e2e.mjs",
+    "test:narration:e2e": "node test/narration.e2e.mjs",
+    "test:privacy:e2e": "node test/privacy.e2e.mjs",
+    "benchmark": "node src/benchmark.mjs"
   },
   "keywords": [],
   "author": "",

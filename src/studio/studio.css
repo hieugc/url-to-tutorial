@@ -21,3 +21,6 @@
 .goal-shortcut{display:grid;grid-template-columns:minmax(240px,1fr) auto auto;align-items:center;gap:16px;border-top:1px solid #eef2f3;margin-top:15px;padding-top:17px}
 .goal-shortcut .field{margin:0}.goal-shortcut .goal-ai-toggle{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:680;color:#455c66;white-space:nowrap}.goal-ai-toggle input{accent-color:var(--teal);width:16px;height:16px}
 @media(max-width:850px){.goal-shortcut{grid-template-columns:1fr}.goal-shortcut .btn{justify-self:start}}
+
+.voice-toggle{display:inline-flex;align-items:center;gap:8px;padding:0 8px;font-size:10px;font-weight:700;color:var(--ink);white-space:nowrap}
+.voice-toggle input{accent-color:var(--teal);width:16px;height:16px}

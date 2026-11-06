@@ -67,6 +67,7 @@
         <button type="button" class="btn secondary" id="add" disabled>+ Add step</button>
         <button type="button" class="btn secondary" id="validate" disabled>Validate</button>
         <button type="button" class="btn secondary" id="preview" disabled>Preview</button>
+        <label class="voice-toggle" for="narrate"><input type="checkbox" id="narrate"> TTS VI/EN + subtitles</label>
         <button type="button" class="btn primary" id="render" disabled>Render MP4 ↗</button>
       </div>
     </div>
@@ -132,7 +133,11 @@
       </aside>
     </div>
 
-    <section id="output" class="output card" hidden aria-live="polite"><div><p class="eyebrow">JOB STATUS</p><h2 id="output-title">Processing</h2><p id="output-detail"></p></div><a id="download" class="btn primary" href="#" hidden>Download MP4 ↓</a></section>
+    <section id="output" class="output card" hidden aria-live="polite"><div><p class="eyebrow">JOB STATUS</p><h2 id="output-title">Processing</h2><p id="output-detail"></p></div><div class="output-links">
+        <a id="srt-download" class="btn secondary" href="#" hidden>Download SRT</a>
+        <a id="vtt-download" class="btn secondary" href="#" hidden>Download VTT</a>
+        <a id="download" class="btn primary" href="#" hidden>Download MP4 ↓</a>
+      </div></section>
   </main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
