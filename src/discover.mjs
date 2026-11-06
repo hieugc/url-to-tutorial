@@ -115,7 +115,8 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
   const report = {
     status: 'running', startedAt: new Date().toISOString(),
     entryUrl: url, maxPages, pages: [],
-    note: 'Read-only GET navigation, same-origin, no clicks or form submissions. Screenshots may contain visible private data.',
+    note: 'No scripted clicks/fills. Non-GET/HEAD HTTP methods and WebSockets are blocked, but GET requests and page scripts can still cause side effects. Operator-controlled URLs only; screenshots may show private data.',
+    blockedHttpMutations: 0, blockedWebSockets: 0,
   };
   if (outDir) await mkdir(outDir, { recursive: true });
   let browser, context;
@@ -130,6 +131,12 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
     context = await browser.newContext({
       viewport: { width: 1280, height: 720 }, serviceWorkers: 'block',
     });
+    // Intercept sockets BEFORE opening a page: read-only discovery has no
+    // reason to establish bidirectional WebSocket sessions.
+    await context.routeWebSocket('**/*', ws => {
+      report.blockedWebSockets++;
+      return ws.close();
+    });
     const page = await context.newPage();
     // Playwright routes only the first URL in a redirect chain. Checking page.url()
     // after goto() detects a cross-origin redirect too late: the browser may have
@@ -139,6 +146,13 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
     let refusedRedirect = false;
     await context.route('**/*', async route => {
       const request = route.request();
+      if (!['GET', 'HEAD'].includes(request.method().toUpperCase())) {
+        // Website JavaScript can send beacons, fetch() or form POSTs even
+        // without operator clicks; never forward these during discovery.
+        report.blockedHttpMutations++;
+        await route.abort('blockedbyclient');
+        return;
+      }
       if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) {
         await route.continue();
         return;
