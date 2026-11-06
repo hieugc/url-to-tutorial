@@ -88,3 +88,12 @@ Mã nguồn không bao gồm node_modules, output chứa dữ liệu website, se
 - Chromium fixture E2E: anonymous public demo, goal selection, read-only plan, H.264 render, zero checkout requests.
 - AI provider requires `OPENAI_API_KEY` and sends public UI labels to API; **no live billable model call has been made in CI**.
 - Existing UTV-004 issue remains OPEN until source-grounding QA, live model test and user acceptance.
+
+
+### UTV-004 — Mock AI and Chromium E2E CI PASS; merged (2026-11-06)
+
+- PR #16: https://github.com/hieugc/url-to-tutorial/pull/16, squash-merged to main as `8476d2e57babe160d48cac6e21568eedc86845d3`.
+- Successful branch CI on source-containing commit `16b6b000`: https://github.com/hieugc/url-to-tutorial/actions/runs/42187732082. All stages PASS: unit, old pipeline, Studio, Hostinger, and goal-planner Chromium E2E.
+- Artifact: https://github.com/hieugc/url-to-tutorial/actions/runs/42187732082/artifacts/13488651393, contains fixture H.264 output, screenshot/evidence and regression outputs.
+- API verification uses a **fake fetch response** for Structured Outputs. No live OpenAI API key was configured, no billable model call was made, and no claim of model quality or production performance is established.
+- Remaining acceptance: manual MacBook review, actual model-backed API test with authorized key, and privacy/prompt-injection evaluation on trusted websites. Issue #6 stays OPEN.
