@@ -5,10 +5,21 @@ import { explore, safePageLink } from '../src/discover.mjs';
 
 const root = 'output/e2e-discovery-public';
 let formSubmissions = 0;
+let redirectTargetUrl;
+let externalOriginHits = 0;
+const externalOrigin = createServer((_req, res) => {
+  externalOriginHits++;
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end('<h1>External origin should not receive redirected navigation</h1>');
+});
 const server = createServer((req, res) => {
   if (req.method === 'POST') formSubmissions++;
   if (req.url === '/redirect') {
-    res.writeHead(302, { Location: 'https://example.org/private-redirect-target' });
+    res.writeHead(302, { Location: redirectTargetUrl + '/private-redirect-target' });
+    return res.end();
+  }
+  if (req.url === '/redirect-local') {
+    res.writeHead(302, { Location: '/child' });
     return res.end();
   }
   if (req.url === '/child') {
@@ -24,6 +35,8 @@ const server = createServer((req, res) => {
     '</main></body></html>');
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+await new Promise(resolve => externalOrigin.listen(0, '127.0.0.1', resolve));
+redirectTargetUrl = 'http://127.0.0.1:' + externalOrigin.address().port;
 try {
   const base = 'http://127.0.0.1:' + server.address().port;
   const controlled = await explore(base, { maxPages: 3, outDir: root, language: 'en' });
@@ -47,17 +60,32 @@ try {
   const failed = JSON.parse(await readFile(failureRoot + '/discovery-report.json', 'utf8'));
   assert.equal(failed.status, 'failed');
   assert.ok(failed.pages[0].error);
-  assert.match(failed.pages[0].error, /Redirected to another origin|BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_CLIENT|Navigation/);
+  assert.match(failed.pages[0].error, /Redirect refused before following target/);
+  assert.equal(failed.pages[0].finalUrl, null,
+    'Redirect target must never become the browser location');
+  assert.equal(externalOriginHits, 0,
+    'The off-origin HTTP server must receive zero requests');
+
+  await assert.rejects(explore(base + '/redirect-local', {
+    maxPages: 1, language: 'en',
+  }), /Redirect refused before following target/,
+  'Even same-origin redirects are refused to prevent chained external redirects');
+  assert.equal(externalOriginHits, 0);
   console.log(JSON.stringify({
     result: 'PASS',
     controlledPages: controlled.report.pages.map(page => ({
       status: page.status, finalUrl: page.finalUrl, candidates: page.candidateCount,
     })),
     externalRedirect: failed.pages[0].error,
+    externalOriginHits,
   }));
 } finally {
   server.closeAllConnections();
-  await new Promise(resolve => server.close(resolve));
+  externalOrigin.closeAllConnections();
+  await Promise.all([
+    new Promise(resolve => server.close(resolve)),
+    new Promise(resolve => externalOrigin.close(resolve)),
+  ]);
 }
 
 const publicSite = await explore('https://example.com', {
