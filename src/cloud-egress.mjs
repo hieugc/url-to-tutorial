@@ -30,8 +30,9 @@ export function isBlockedIp(input) {
     if (ip.startsWith('2001:db8:') || ip.startsWith('2001:0db8:')) return true;
     // Conservatively deny unspecified, site-local, documentation and
     // unrecognized addresses; cloud workers should enforce IP egress at network layer.
-    return !ip.startsWith('2001:') && !ip.startsWith('2600:') &&
-      !ip.startsWith('2a00:') && !ip.startsWith('2400:');
+    // Globally routable IPv6 unicast lives under 2000::/3. Keep the
+    // explicit exclusions above; unknown other ranges remain blocked.
+    return !(first >= 0x2000 && first <= 0x3fff);
   }
   return true;
 }
