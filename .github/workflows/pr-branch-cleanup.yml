@@ -1,0 +1,56 @@
+name: Prune merged work branch
+on:
+  pull_request:
+    types: [closed]
+
+# Only same-repository merged work branches on main are eligible. Never
+# run source code from the PR, and never delete a branch whose head changed.
+permissions:
+  contents: write
+
+jobs:
+  delete-merged-work-branch:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (startsWith(github.event.pull_request.head.ref, 'feat/') ||
+       startsWith(github.event.pull_request.head.ref, 'fix/') ||
+       startsWith(github.event.pull_request.head.ref, 'chore/') ||
+       startsWith(github.event.pull_request.head.ref, 'test/'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Always run code from the trusted default branch, not PR content.
+          ref: main
+          persist-credentials: true
+      - name: Delete only the exact merged PR head
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$HEAD_BRANCH" in
+            feat/*|fix/*|chore/*|test/*) ;;
+            *) echo "Refusing unexpected branch name"; exit 1 ;;
+          esac
+          ref="refs/heads/$HEAD_BRANCH"
+          actual="$(git ls-remote --heads origin "$ref" | cut -f1)"
+          if [[ -z "$actual" ]]; then
+            echo "Branch already deleted: $ref"
+            exit 0
+          fi
+          if [[ "$actual" != "$EXPECTED_SHA" ]]; then
+            echo "::warning::Branch changed after PR merge; leave $ref untouched"
+            exit 0
+          fi
+          # Git push with an exact lease rejects concurrent branch updates.
+          git push --force-with-lease="$ref:$EXPECTED_SHA" origin ":$ref"
+          if [[ -n "$(git ls-remote --heads origin "$ref")" ]]; then
+            echo "Branch still exists after deletion: $ref"
+            exit 1
+          fi
+          echo "Deleted merged branch $ref at $EXPECTED_SHA"
