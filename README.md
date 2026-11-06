@@ -4,6 +4,22 @@ Nhập URL → tạo kịch bản chỉnh sửa được → Driver.js spotlight
 
 MVP local-first cho hướng dẫn sử dụng website, bắt nguồn từ bài toán quay video hướng dẫn mua hosting. Có demo hosting giả lập, không giao dịch thật. **Đây là CLI MVP, chưa phải studio AI hoàn chỉnh.**
 
+## Studio Editor (local-only, v0.2)
+
+Bản Studio có giao diện trình duyệt để khám phá trang web, chỉnh sửa và sắp xếp các bước, thêm action `highlight`, `click`, `fill`, `navigate`, `branch`, `stop`; import/export plan JSON; validate; preview và render MP4.
+
+```bash
+npm ci
+npx playwright install chromium
+brew install ffmpeg  # macOS, nếu chưa cài
+npm run studio
+# Mở http://127.0.0.1:4173
+```
+
+Studio chạy trên `127.0.0.1:4173`; không expose qua public internet, tunnel hoặc reverse proxy. Nhập **URL đáng tin cậy**: phiên bản local chưa có sandbox mạng ngăn SSRF/private IP, không dùng để mở cho người khác gửi URL tự do. Các bước có tác động cần đánh dấu `reviewed: true` **và** xác nhận lại trước preview/render. Preview vẫn thực thi action thật! Hệ thống không tự thực hiện mua hàng, thanh toán hay đăng ký. Không dùng mật khẩu, thông tin thẻ hoặc dữ liệu nhạy cảm thật trong plan/video.
+
+Tính năng hiện có: form editor, thay đổi thứ tự bằng nút ↑/↓, JSON nâng cao, danh sách lỗi schema/review, xem ảnh snapshot sau discover, job status, link tải MP4. Nếu chuyển thứ tự làm sai luồng branch, validator sẽ báo lỗi. Job chỉ lưu trong RAM trong phiên chạy; công việc đang chạy không thể resume sau restart. Trình duyệt mới mở trên máy (preview headed) cần môi trường desktop. Chưa có drag-and-drop trực tiếp, AI planner, TTS, lưu project nhiều phiên, hoặc cloud multiuser.
+
 ## Chạy nhanh
 
 Yêu cầu: Node.js 22+, FFmpeg/ffprobe, Chromium của Playwright. Trên macOS: `brew install node ffmpeg` nếu chưa có.

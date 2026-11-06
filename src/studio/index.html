@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#13283a">
+  <title>URL to Tutorial · Studio</title>
+  <link rel="stylesheet" href="/studio.css">
+  <script type="module" src="/studio.js"></script>
+</head>
+<body>
+  <a href="#workspace" class="skip-link">Bỏ qua điều hướng</a>
+  <header class="site-header">
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">UT</span>
+      <div><strong>URL TO TUTORIAL</strong><small>STUDIO / LOCAL EDITION</small></div>
+    </div>
+    <div class="header-state"><span class="status-dot"></span> LOCAL WORKSPACE <span class="version">v0.2</span></div>
+  </header>
+  <main id="workspace" class="workspace" tabindex="-1">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">INTERACTIVE GUIDE BUILDER</p>
+        <h1>Website to tutorial, step by step.</h1>
+        <p>Khám phá giao diện, biên tập kịch bản có spotlight và tạo video MP4. Mọi thao tác ảnh hưởng website đều phải được duyệt.</p>
+      </div>
+      <div class="hero-art" aria-hidden="true"><span>URL</span><b>→</b><span>MP4</span></div>
+    </section>
+
+    <section class="source card" aria-labelledby="source-heading">
+      <div class="card-title"><div><p class="eyebrow">START A PROJECT</p><h2 id="source-heading">Website source</h2></div><span class="tag">READ-ONLY DISCOVERY</span></div>
+      <form id="discover-form" class="source-form">
+        <div class="field url-field">
+          <label for="url">Website URL</label>
+          <input type="url" id="url" name="url" placeholder="https://www.hostinger.com/vn#pricing" required autocomplete="url">
+          <small>Chỉ sử dụng URL đáng tin cậy. Khám phá không tự click, nhập dữ liệu hoặc gửi biểu mẫu.</small>
+        </div>
+        <div class="field"><label for="language">Language</label><select id="language" name="language"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></div>
+        <div class="field"><label for="pages">Max pages</label><select id="pages" name="pages"><option value="1">1 page</option><option value="2">2 pages</option><option value="3">3 pages</option><option value="4">4 pages</option><option value="5">5 pages</option></select></div>
+        <button class="btn primary" type="submit" id="discover">Explore website ↗</button>
+      </form>
+    </section>
+
+    <div class="toolbar">
+      <div><p class="eyebrow">WORKFLOW EDITOR</p><strong id="project-heading">No plan loaded</strong><span id="change-state" class="muted">Import JSON or explore a website</span></div>
+      <div class="toolbar-actions">
+        <button type="button" class="btn secondary" id="import">Import JSON</button>
+        <input id="file" type="file" accept=".json,application/json" hidden>
+        <button type="button" class="btn secondary" id="export" disabled>Export</button>
+        <button type="button" class="btn secondary" id="add" disabled>+ Add step</button>
+        <button type="button" class="btn secondary" id="validate" disabled>Validate</button>
+        <button type="button" class="btn secondary" id="preview" disabled>Preview</button>
+        <button type="button" class="btn primary" id="render" disabled>Render MP4 ↗</button>
+      </div>
+    </div>
+
+    <div class="editor-grid">
+      <aside class="card panel" aria-labelledby="steps-title">
+        <div class="panel-heading"><div><p class="eyebrow">01 / STRUCTURE</p><h2 id="steps-title">Tutorial steps</h2></div><span class="counter" id="count">0</span></div>
+        <ol class="step-list" id="steps" aria-label="Danh sách bước hướng dẫn"></ol>
+        <div class="panel-bottom">
+          <button type="button" class="btn secondary block" id="assemble" hidden>Assemble discovered pages</button>
+          <p class="muted" id="step-note">Thêm kịch bản bằng cách nhập URL hoặc import JSON.</p>
+        </div>
+      </aside>
+
+      <section class="card panel editor-panel" aria-labelledby="editor-title">
+        <div class="panel-heading"><div><p class="eyebrow">02 / CONTENT & ACTIONS</p><h2 id="editor-title">Step editor</h2></div><span id="step-position" class="muted">—</span></div>
+        <div id="empty-editor" class="empty-state"><div class="empty-mark">✳</div><h3>Select a step to edit</h3><p>Chỉnh tiêu đề, nội dung tooltip, selector, hành động và thời lượng. Đổi thứ tự bằng mũi tên trong danh sách bên trái.</p></div>
+        <form id="step-form" hidden>
+          <div class="fields two">
+            <div class="field"><label for="step-id">Step ID</label><input id="step-id" name="id" required readonly></div>
+            <div class="field"><label for="step-action">Action</label><select id="step-action" name="action"><option>highlight</option><option>click</option><option>fill</option><option>navigate</option><option>branch</option><option>stop</option></select></div>
+          </div>
+          <div class="field"><label for="step-title">Title</label><input id="step-title" name="title" required maxlength="160"></div>
+          <div class="field"><label for="step-description">Tooltip / narration text</label><textarea id="step-description" name="description" rows="4" maxlength="1200"></textarea></div>
+          <div class="fields two">
+            <div class="field"><label for="hold-ms">Hold duration (ms)</label><input id="hold-ms" type="number" name="holdMs" min="500" max="30000" step="100"></div>
+            <div class="field"><label for="next-id">Next step ID (optional)</label><input id="next-id" name="next" placeholder="auto: following step"></div>
+          </div>
+          <div class="section-heading">TARGET LOCATOR</div>
+          <div class="fields two">
+            <div class="field"><label for="target-type">Target by</label><select id="target-type" name="targetType"><option value="css">CSS selector</option><option value="role">Accessible role</option><option value="none">No target</option></select></div>
+            <div class="field" id="css-field"><label for="target-css">CSS selector</label><input id="target-css" name="targetCss" spellcheck="false" placeholder="#pricing"></div>
+            <div class="field" id="role-field" hidden><label for="target-role">Role</label><select id="target-role" name="targetRole"><option>heading</option><option>button</option><option>link</option><option>textbox</option><option>combobox</option></select></div>
+            <div class="field" id="name-field" hidden><label for="target-name">Accessible name</label><input id="target-name" name="targetName"></div>
+          </div>
+          <div class="section-heading">ACTION OPTIONS</div>
+          <div id="action-options">
+            <div class="field" id="fill-field" hidden><label for="fill-value">Fill value (demo data only)</label><input id="fill-value" name="value" autocomplete="off"></div>
+            <div class="field" id="navigate-field" hidden><label for="navigate-url">Navigate to URL</label><input id="navigate-url" name="url" type="url"></div>
+            <div class="field" id="expected-field"><label for="expected">Expected selector after action (optional)</label><input id="expected" name="expected" spellcheck="false" placeholder="#cart-title"></div>
+            <div class="fields two" id="branch-fields" hidden>
+              <div class="field"><label for="condition-css">Condition selector</label><input id="condition-css" name="conditionCss" spellcheck="false" placeholder="#cart-title"></div>
+              <div class="field"><label for="condition-state">When element is</label><select id="condition-state" name="conditionState"><option>visible</option><option>hidden</option></select></div>
+              <div class="field"><label for="on-true">True → step ID</label><input id="on-true" name="onTrue"></div>
+              <div class="field"><label for="on-false">False → step ID</label><input id="on-false" name="onFalse"></div>
+            </div>
+            <div class="approval" id="approval-box" hidden><input type="checkbox" id="reviewed" name="reviewed"><label for="reviewed"><strong>I reviewed this action</strong><small>Click / fill / navigate có thể thay đổi dữ liệu trên website. Chỉ bật sau khi tự kiểm tra kỹ.</small></label></div>
+          </div>
+          <div class="form-footer"><button type="submit" class="btn primary">Save step</button></div>
+        </form>
+        <div class="json-editor"><details><summary>Advanced · Edit plan JSON</summary><label for="json-text">Full plan JSON</label><textarea id="json-text" rows="14" spellcheck="false"></textarea><button type="button" id="apply-json" class="btn secondary">Apply JSON</button></details></div>
+      </section>
+
+      <aside class="card panel right-panel" aria-labelledby="quality-heading">
+        <div class="panel-heading"><div><p class="eyebrow">03 / QUALITY GATE</p><h2 id="quality-heading">Readiness</h2></div></div>
+        <div class="readiness" id="readiness" role="status">Not validated</div>
+        <ul id="issues" class="issues"></ul>
+        <div class="separator"></div>
+        <div class="field"><label for="plan-title">Project title</label><input id="plan-title" disabled maxlength="150"></div>
+        <dl class="stats"><div><dt>Language</dt><dd id="info-language">—</dd></div><div><dt>Viewport</dt><dd id="info-viewport">1280 × 720</dd></div><div><dt>Discovered pages</dt><dd id="info-pages">0</dd></div></dl>
+        <figure id="preview-figure" class="screenshot" hidden><img id="site-screenshot" alt="Ảnh chụp trang đã khám phá"><figcaption>Snapshot from discovery (not a live website)</figcaption></figure>
+        <div class="safety-box"><strong>Local execution only</strong><p>Preview và render chạy các action đã duyệt trên website thật. Không tự động mua hàng, thanh toán hoặc sử dụng mật khẩu hay thẻ thật. Ảnh/video có thể chứa thông tin nhạy cảm.</p></div>
+      </aside>
+    </div>
+
+    <section id="output" class="output card" hidden aria-live="polite"><div><p class="eyebrow">JOB STATUS</p><h2 id="output-title">Processing</h2><p id="output-detail"></p></div><a id="download" class="btn primary" href="#" hidden>Download MP4 ↓</a></section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
