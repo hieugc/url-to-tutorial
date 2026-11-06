@@ -19,6 +19,7 @@ jobs:
       - run: npm run test:e2e
       - run: npm run test:studio:e2e
       - run: npm run test:hostinger:e2e
+      - run: npm run test:goal:e2e
       - uses: actions/upload-artifact@v4
         if: always()
         with:
