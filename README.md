@@ -20,6 +20,25 @@ Studio chạy trên `127.0.0.1:4173`; không expose qua public internet, tunnel 
 
 Tính năng hiện có: form editor, thay đổi thứ tự bằng nút ↑/↓, JSON nâng cao, danh sách lỗi schema/review, xem ảnh snapshot sau discover, job status, link tải MP4. Nếu chuyển thứ tự làm sai luồng branch, validator sẽ báo lỗi. Job chỉ lưu trong RAM trong phiên chạy; công việc đang chạy không thể resume sau restart. Trình duyệt mới mở trên máy (preview headed) cần môi trường desktop. Chưa có drag-and-drop trực tiếp, AI planner, TTS, lưu project nhiều phiên, hoặc cloud multiuser.
 
+## Goal-based Guide Planner — offline và AI chọn bước (bản nháp)
+
+Planner nhận URL và mục tiêu bằng VI/EN. Sau `discover`, hệ thống thu thập **ID, nhãn và selector quan sát được**, tối đa 20 candidates đầu tiên của trang hiện tại; tạo kế hoạch spotlight/stop, không click/fill/navigate và không tự chọn mua gói.
+
+```bash
+# Hoạt động không cần API hoặc GPU local: từ khóa khớp nhãn DOM
+npm run tutorial -- goal https://driverjs.com --goal 'Giới thiệu Driver.js' --out output/goal-offline
+
+# Tùy chọn AI (dữ liệu nhãn UI public sẽ được gửi tới OpenAI API)
+# Cung cấp OPENAI_API_KEY bằng biến môi trường của shell, không commit key.
+npm run tutorial -- goal https://driverjs.com --goal 'Giới thiệu nút bắt đầu' --ai --out output/goal-ai
+```
+
+Trong Studio, điền **Mục tiêu hướng dẫn**, chọn AI nếu muốn, bấm **Generate goal draft**. Nếu chọn AI, server cần `OPENAI_API_KEY`. Mặc định model dùng `OPENAI_MODEL` hoặc `gpt-6-luna`; đổi qua biến môi trường nếu cần. API key chỉ đọc trên server, không đưa vào JSON plan hay client.
+
+**Ràng buộc:** LLM chỉ trả về danh sách `candidate-ID` từ bằng chứng DOM; hệ thống dựng lại selector/description từ evidence được quan sát và từ chối ID không tồn tại, duplicate hoặc danh sách rỗng. Website là dữ liệu không tin cậy, không phải lệnh. Chế độ AI gửi **nhãn text của các control/heading** và mục tiêu tới nhà cung cấp API; tránh dùng trên site chứa thông tin riêng tư. Không có workflow click nhiều trang tự động ở giai đoạn này. Nếu DOM không đủ thông tin, planner báo thiếu bằng chứng thay vì bịa.
+
+Kết quả: `plan.json`, `goal-evidence.json`, `discovery-report.json`, `discovery-page-1.png`. Xem plan, validate và render như pipeline hiện có. Khả năng phù hợp mục tiêu và chuyển từ highlight thành task workflow còn cần QA bổ sung.
+
 ## Hostinger Adapter — giới thiệu bảng giá không mua hàng
 
 Có thể tạo **kịch bản giới thiệu các gói Hostinger** theo DOM đang hiển thị, không hardcode giá và không tự bấm nút mua. Adapter chỉ nhận URL HTTPS thuộc `hostinger.com` hoặc `www.hostinger.com` với đường dẫn `/vn` và không có query string.
