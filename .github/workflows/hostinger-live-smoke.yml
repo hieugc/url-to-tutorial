@@ -1,0 +1,38 @@
+name: Hostinger read-only production smoke
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/utv-002-hostinger-pricing-guide-20261106
+    paths:
+      - .github/workflows/hostinger-live-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  pricing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Read live Hostinger VN pricing without clicking
+        run: npm run tutorial -- hostinger 'https://www.hostinger.com/vn#pricing' --out output/hostinger-live
+      - name: Validate observed plan
+        run: npm run tutorial -- validate output/hostinger-live/plan.json
+      - name: Record read-only live pricing guide
+        run: npm run tutorial -- render output/hostinger-live/plan.json --out output/hostinger-live-video
+      - name: Keep screenshots, evidence, reports and MP4
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hostinger-live-evidence
+          path: output/
+          retention-days: 7
