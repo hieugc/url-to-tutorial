@@ -19,7 +19,10 @@
     "test:goal:e2e": "node test/goal.e2e.mjs",
     "test:narration:e2e": "node test/narration.e2e.mjs",
     "test:privacy:e2e": "node test/privacy.e2e.mjs",
-    "benchmark": "node src/benchmark.mjs"
+    "benchmark": "node src/benchmark.mjs",
+    "test:iframe-session:e2e": "node test/iframe-session.e2e.mjs",
+    "test:discovery-public:e2e": "node test/discovery-public.e2e.mjs",
+    "test:webreel:e2e": "node test/webreel-benchmark.e2e.mjs"
   },
   "keywords": [],
   "author": "",

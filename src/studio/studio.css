@@ -24,3 +24,5 @@
 
 .voice-toggle{display:inline-flex;align-items:center;gap:8px;padding:0 8px;font-size:10px;font-weight:700;color:var(--ink);white-space:nowrap}
 .voice-toggle input{accent-color:var(--teal);width:16px;height:16px}
+
+.output-links{display:flex;align-items:center;gap:8px;flex-wrap:wrap}

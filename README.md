@@ -33,6 +33,50 @@ This does **not** integrate Webreel or establish true browser-rendering FPS or M
 
 **UTV-009 – Cloud API not enabled.** `src/cloud-egress.mjs` has a public URL/DNS preflight helper and tests but is **not** a complete SSRF defense. Redirects, browser subrequests and DNS rebinding require real network egress isolation in a separate worker. Current Studio only binds to 127.0.0.1 without public auth, tenant isolation or billing. **Do not expose it on the internet.** See [security design](docs/CLOUD-SECURITY.md).
 
+## Follow-up implementation — cancellation, iframe and authenticated walkthroughs
+
+### Cooperative cancellation + idempotency
+
+- `POST /api/jobs/:id/cancel` cancels queued jobs immediately and signals running render, preview, discovery, goal and Hostinger jobs to stop. Browser contexts close and spawned FFmpeg/eSpeak processes receive SIGTERM, then SIGKILL after 2 seconds if needed.
+- A running job reports `cancelRequested: true` until the worker has unwound and persisted `cancelled`.
+- Job submissions accept `Idempotency-Key` (8–128 safe characters). Repeating the same key and payload returns the original job; reusing a key for different input returns HTTP 409. Keys and request hashes are retained with the bounded SQLite job history.
+- A hard process kill still recovers as `interrupted`; no browser action is replayed automatically.
+
+### Cross-origin iframe targets
+
+Plans may explicitly address one visible iframe and a unique element inside it:
+
+```json
+{
+  "target": {
+    "frame": { "css": "iframe#details" },
+    "target": { "css": "#product-heading" }
+  }
+}
+```
+
+The renderer verifies that the iframe selector matches exactly one visible frame. It draws the spotlight/popover in the top document using the iframe element's main-page bounding box. Privacy masking and OTP/MFA/CAPTCHA detection inspect all attached frames, including cross-origin frames. Popups/new tabs remain unsupported.
+
+### Explicit manual login (CLI only)
+
+For a walkthrough that requires a user account, use a visible browser and sign in yourself:
+
+```bash
+npm run tutorial -- render output/my-guide/plan.json --headed --manual-login --out output/my-guide-authenticated
+```
+
+The login context has no video recording. After the user confirms in the terminal, Playwright transfers browser storage state **in memory only** to a fresh recording context. The session is not exported to JSON, written to the job database or reused across jobs. The user must log in again for a later run. If an OTP/MFA/CAPTCHA challenge remains after confirmation, capture stops. The Studio UI does not currently expose manual login; use the CLI.
+
+### Webreel A/B capture
+
+`npm run test:webreel:e2e` downloads Webreel CLI v0.1.4 ephemerally with `npx`, records the same local fixture at 1280×720, and compares its output with the Playwright/Driver.js video using FFprobe. Results and both videos are written to `output/webreel-ab/`. Webreel is not a default runtime dependency or replacement renderer; its cursor/HUD differs from Driver.js, so a human visual comparison remains required. Upstream: [vercel-labs/webreel](https://github.com/vercel-labs/webreel) (Apache-2.0).
+
+### Discovery safety
+
+Discovery blocks cross-origin main-frame navigation and redirects at the browser routing layer, in addition to same-origin link filtering. The public smoke test checks `https://example.com` and a redirect-to-external failure fixture. It never clicks controls or submits forms.
+
+The GitHub Actions workflow now runs Linux Chromium/FFmpeg, Xvfb-backed manual-session/iframe tests, Webreel A/B, public discovery and a separate macOS compatibility job. A GitHub macOS runner is **not** the user's M3 MacBook; local visual review, M3 CPU/RAM and audio listening remain human acceptance items.
+
 ## Studio Editor (local-only, v0.2)
 
 Bản Studio có giao diện trình duyệt để khám phá trang web, chỉnh sửa và sắp xếp các bước, thêm action `highlight`, `click`, `fill`, `navigate`, `branch`, `stop`; import/export plan JSON; validate; preview và render MP4.

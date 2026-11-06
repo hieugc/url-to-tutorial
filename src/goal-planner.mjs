@@ -77,7 +77,7 @@ export function verifySelection(selectedIds, candidates) {
 export async function selectWithOpenAI(goal, candidates, {
   apiKey = process.env.OPENAI_API_KEY,
   model = process.env.OPENAI_MODEL || 'gpt-6-luna',
-  fetchImpl = fetch,
+  fetchImpl = fetch, signal,
 } = {}) {
   if (!apiKey || typeof apiKey !== 'string') throw new Error('OPENAI_API_KEY is required for --ai; use offline mode without it');
   if (!/^[a-z0-9._-]{3,80}$/i.test(model)) throw new Error('Invalid model identifier');
@@ -97,7 +97,7 @@ export async function selectWithOpenAI(goal, candidates, {
       Authorization: 'Bearer ' + apiKey,
       'Content-Type': 'application/json',
     },
-    signal: AbortSignal.timeout(30000),
+    signal: signal || AbortSignal.timeout(30000),
     body: JSON.stringify({
       model,
       store: false,
@@ -180,7 +180,7 @@ export function goalPlanFromSelection({
 }
 
 export async function createGoalGuide(url, {
-  goal, outDir, language = 'vi', ai = false, exploreImpl = explore, selectImpl = selectWithOpenAI,
+  goal, outDir, language = 'vi', ai = false, exploreImpl = explore, selectImpl = selectWithOpenAI, signal,
 } = {}) {
   if (typeof goal !== 'string' || goal.trim().length < 4 || goal.length > 400) {
     throw new Error('Enter a specific goal (4–400 characters)');
@@ -196,10 +196,11 @@ export async function createGoalGuide(url, {
   };
   let evidence = null;
   try {
-    const discovery = await exploreImpl(url, { outDir: root, language, maxPages: 1 });
+    const discovery = await exploreImpl(url, { outDir: root, language, maxPages: 1, signal });
     const source = candidatesFromDiscovery(discovery);
+    if (signal?.aborted) throw Object.assign(new Error('Goal planning cancelled'), { name: 'AbortError' });
     const selection = ai
-      ? await selectImpl(goal, source.candidates)
+      ? await selectImpl(goal, source.candidates, { signal })
       : selectOffline(goal, source.candidates);
     const plan = goalPlanFromSelection({
       url: source.url, title: source.title, goal, language,
@@ -215,8 +216,8 @@ export async function createGoalGuide(url, {
     if (root) await writeFile(path.join(root, 'plan.json'), JSON.stringify(plan, null, 2));
     return { plan, evidence, report };
   } catch (error) {
-    report.status = 'failed';
-    report.error = error.message;
+    report.status = signal?.aborted || error.name === 'AbortError' ? 'cancelled' : 'failed';
+    report.error = report.status === 'cancelled' ? 'Cancelled by operator' : error.message;
     throw error;
   } finally {
     report.finishedAt = new Date().toISOString();

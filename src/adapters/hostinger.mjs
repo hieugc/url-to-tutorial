@@ -178,7 +178,9 @@ export function hostingerPricingPlan(observed, { focus = 'Premium', language = '
   });
 }
 
-export async function createHostingerGuide(url, { headed = false, language = 'vi', outDir, focus = 'Premium' } = {}) {
+export async function createHostingerGuide(url, {
+  headed = false, language = 'vi', outDir, focus = 'Premium', signal,
+} = {}) {
   validateHostingerUrl(url);
   if (!['vi', 'en'].includes(language)) throw new Error('language must be vi or en');
   const root = outDir ? path.resolve(outDir) : null;
@@ -192,18 +194,33 @@ export async function createHostingerGuide(url, { headed = false, language = 'vi
     warnings: [],
     note: 'Read-only observation. No click, cookie consent, account login, plan selection or checkout. Prices may change.',
   };
-  let browser;
+  let browser, context;
   let evidence = null;
+  const abortHandler = () => {
+    context?.close().catch(() => {});
+    browser?.close().catch(() => {});
+  };
+  signal?.addEventListener('abort', abortHandler, { once: true });
   try {
+    if (signal?.aborted) throw Object.assign(new Error('Hostinger inspection cancelled'), { name: 'AbortError' });
     browser = await launch(headed);
-    const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: language === 'vi' ? 'vi-VN' : 'en-US' });
+    context = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: language === 'vi' ? 'vi-VN' : 'en-US' });
     const page = await context.newPage();
+    await context.route('**/*', async route => {
+      const request = route.request();
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+        try { validateHostingerUrl(request.url()); }
+        catch { await route.abort('blockedbyclient'); return; }
+      }
+      await route.continue();
+    });
     const targets = [url];
     // Some home pages place pricing elsewhere; use an explicitly documented
     // same-origin read-only fallback, never a checkout or user-data page.
     if (new URL(url).pathname === '/vn') targets.push('https://www.hostinger.com/vn/web-hosting');
     let observed = null;
     for (const target of targets) {
+      if (signal?.aborted) throw Object.assign(new Error('Hostinger inspection cancelled'), { name: 'AbortError' });
       const item = { url: target, status: null, finalUrl: null, plans: 0 };
       report.checkedUrls.push(item);
       try {
@@ -256,12 +273,14 @@ export async function createHostingerGuide(url, { headed = false, language = 'vi
     const plan = hostingerPricingPlan(observed, { focus, language });
     return { plan, evidence, report };
   } catch (error) {
-    report.status = 'failed';
-    report.error = error.message;
+    report.status = signal?.aborted || error.name === 'AbortError' ? 'cancelled' : 'failed';
+    report.error = report.status === 'cancelled' ? 'Cancelled by operator' : error.message;
     throw error;
   } finally {
+    signal?.removeEventListener('abort', abortHandler);
     report.finishedAt = new Date().toISOString();
     if (root) await writeFile(path.join(root, 'hostinger-evidence.json'), JSON.stringify({ ...report, evidence }, null, 2));
+    await context?.close().catch(() => {});
     await browser?.close();
   }
 }

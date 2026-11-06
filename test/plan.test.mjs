@@ -66,6 +66,18 @@ test('stop is terminal and duplicate step ids fail', () => {
   assert.equal(Plan.safeParse(p).success, false);
 });
 
+test('Cross-origin iframe targets are explicit and cannot be confused with top-level selectors', () => {
+  const p = base();
+  p.steps[0].target = { frame: { css: 'iframe#payment-help' }, target: { css: 'h2' } };
+  const parsed = Plan.parse(p);
+  assert.deepEqual(parsed.steps[0].target, {
+    frame: { css: 'iframe#payment-help' }, target: { css: 'h2' },
+  });
+  const invalid = structuredClone(p);
+  invalid.steps[0].target = { frame: { role: 'iframe', name: 'Help' }, target: { css: 'h2' } };
+  assert.equal(Plan.safeParse(invalid).success, false);
+});
+
 test('HTML from page or plan cannot become active popover markup', () => {
   assert.equal(escapeHtml('<img onerror="alert(1)">'), '&lt;img onerror=&quot;alert(1)&quot;&gt;');
 });

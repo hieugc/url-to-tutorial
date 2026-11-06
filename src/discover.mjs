@@ -102,7 +102,7 @@ async function snapshotPage(page) {
  * submits forms, fills inputs, or automatically approves action steps.
  * Each page gets its own editable plan (cross-page replay isn't implied).
  */
-export async function explore(url, { headed = false, language = 'vi', maxPages = 1, outDir } = {}) {
+export async function explore(url, { headed = false, language = 'vi', maxPages = 1, outDir, signal } = {}) {
   HttpUrl.parse(url);
   if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 5) {
     throw new Error('maxPages must be an integer between 1 and 5');
@@ -118,12 +118,31 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
     note: 'Read-only GET navigation, same-origin, no clicks or form submissions. Screenshots may contain visible private data.',
   };
   if (outDir) await mkdir(outDir, { recursive: true });
-  let browser;
+  let browser, context;
+  const abortHandler = () => {
+    context?.close().catch(() => {});
+    browser?.close().catch(() => {});
+  };
+  signal?.addEventListener('abort', abortHandler, { once: true });
   try {
+    if (signal?.aborted) throw Object.assign(new Error('Discovery cancelled'), { name: 'AbortError' });
     browser = await launch(headed);
-    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const page = await context.newPage();
+    await context.route('**/*', async route => {
+      const request = route.request();
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+        let target;
+        try { target = new URL(request.url()); } catch { await route.abort('blockedbyclient'); return; }
+        if (target.origin !== origin) {
+          await route.abort('blockedbyclient');
+          return;
+        }
+      }
+      await route.continue();
+    });
     while (queue.length && report.pages.length < maxPages) {
+      if (signal?.aborted) throw Object.assign(new Error('Discovery cancelled'), { name: 'AbortError' });
       const requestedUrl = queue.shift();
       if (visited.has(requestedUrl)) continue;
       visited.add(requestedUrl);
@@ -174,12 +193,14 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
     report.planCount = plans.length;
     return { plan: plans[0], plans, report };
   } catch (error) {
-    report.status = 'failed';
-    report.error = error.message;
+    report.status = signal?.aborted || error.name === 'AbortError' ? 'cancelled' : 'failed';
+    report.error = report.status === 'cancelled' ? 'Cancelled by operator' : error.message;
     throw error;
   } finally {
+    signal?.removeEventListener('abort', abortHandler);
     report.finishedAt = new Date().toISOString();
     if (outDir) await writeFile(path.join(outDir, 'discovery-report.json'), JSON.stringify(report, null, 2));
+    await context?.close().catch(() => {});
     await browser?.close();
   }
 }

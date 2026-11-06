@@ -5,7 +5,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -14,7 +14,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng xvfb
       - run: npm test
       - run: npm run test:e2e
       - run: npm run test:studio:e2e
@@ -22,10 +22,43 @@ jobs:
       - run: npm run test:goal:e2e
       - run: npm run test:narration:e2e
       - run: npm run test:privacy:e2e
+      - run: xvfb-run -a npm run test:iframe-session:e2e
+      - run: npm run test:discovery-public:e2e
       - run: npm run benchmark -- output/e2e-demo/tutorial.mp4
+      - run: npm run test:webreel:e2e
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: tutorial-evidence
+          path: output/
+          retention-days: 7
+
+  macos-regression:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: 'echo "macOS runner architecture: $(uname -m)"'
+      - run: npm ci
+      - run: npx playwright install chromium
+      - run: brew install ffmpeg espeak-ng
+      - run: npm test
+      - run: npm run test:e2e
+      - run: npm run test:studio:e2e
+      - run: npm run test:hostinger:e2e
+      - run: npm run test:goal:e2e
+      - run: npm run test:narration:e2e
+      - run: npm run test:privacy:e2e
+      - run: SKIP_HEADED_SESSION=1 npm run test:iframe-session:e2e
+      - run: npm run test:discovery-public:e2e
+      - run: npm run benchmark -- output/e2e-demo/tutorial.mp4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tutorial-macos-evidence
           path: output/
           retention-days: 7
