@@ -73,7 +73,7 @@ The login context has no video recording. After the user confirms in the termina
 
 ### Discovery safety
 
-Discovery blocks cross-origin main-frame navigation and redirects at the browser routing layer, in addition to same-origin link filtering. The public smoke test checks `https://example.com` and a redirect-to-external failure fixture. It never clicks controls or submits forms.
+Discovery blocks cross-origin main-frame navigation and **all main-document redirects before following them**, in addition to same-origin link filtering. It rejects browser-originated HTTP methods other than `GET`/`HEAD` (including scripted POST/PATCH/beacons), disables Service Workers and closes WebSockets before server connection. A document-start privacy mask hides form input text/placeholders and explicit `[data-private]` / `[data-sensitive]` fields; visible CAPTCHA/MFA/OTP challenges fail closed **without saving a screenshot**. Each `discovery-report.json` records blocked HTTP methods and WebSockets. The fixture tests attempt automatic POST/PATCH and WebSocket writes, a cross-origin redirect and an OTP page; `https://example.com` is also checked. **These are defense-in-depth protections, not an isolated network sandbox:** arbitrary page scripts and GETs may still have side effects, off-origin subresources may load, and ordinary visible text can still contain secrets. Use only operator-controlled URLs; do not expose Studio to strangers.
 
 The GitHub Actions workflow now runs Linux Chromium/FFmpeg, Xvfb-backed manual-session/iframe tests, Webreel A/B, public discovery and a separate macOS compatibility job. A GitHub macOS runner is **not** the user's M3 MacBook; local visual review, M3 CPU/RAM and audio listening remain human acceptance items.
 
@@ -216,7 +216,7 @@ Xem [kiến trúc và API dự kiến](docs/ARCHITECTURE.md), [đánh giá repo 
 npm run tutorial -- discover https://driverjs.com --max-pages 3 --out output/driver-multipage
 ```
 
-`--max-pages` nhận số nguyên 1–5 (mặc định 1). Explorer chỉ mở liên kết trang cùng origin qua GET; không click, fill, submit form, mở trang có query string, hoặc đi vào các đường dẫn thanh toán/đặt hàng/đăng xuất/xóa. Mỗi trang hợp lệ có một plan riêng trong `output/.../pages/page-N.plan.json`; `plan.json` ở gốc là plan của trang đầu tiên. Có thể ghép các page plan thành một video liên trang bằng lệnh `assemble` bên dưới. Mỗi bước `navigate` được tạo ở trạng thái chưa duyệt; phải kiểm tra URL và đặt `reviewed: true` trước khi preview/render. Một link GET vẫn có thể gây thay đổi trên website thiết kế không đúng chuẩn, vì vậy chỉ khám phá URL tin cậy; screenshot có thể chứa dữ liệu riêng tư.
+`--max-pages` nhận số nguyên 1–5 (mặc định 1). Explorer mở các trang cùng origin bằng GET/HEAD và từ chối chuyển hướng HTTP, request POST/PATCH/DELETE và WebSocket. Nó không tự click hoặc điền form, nhưng script trong trang vẫn chạy; **GET vẫn có thể gây tác động**, vì vậy chỉ nhập URL đáng tin cậy. Mỗi trang hợp lệ có một plan riêng trong `output/.../pages/page-N.plan.json`; `plan.json` là plan trang đầu. Lệnh `assemble` nối các page plan và yêu cầu `reviewed: true` trước khi preview/render thao tác `navigate`. Trường nhập liệu được che trước khi chụp; các văn bản nhạy cảm khác có thể vẫn xuất hiện. Khi gặp CAPTCHA/MFA/OTP, discovery dừng và lưu report nhưng không lưu screenshot của trang đó.
 
 Nếu trang không có heading/control, kiểm tra `discovery-report.json` và `discovery-page-1.png` trước khi thử website khác. `https://example.com` không được coi là fixture kiểm thử ổn định.
 
