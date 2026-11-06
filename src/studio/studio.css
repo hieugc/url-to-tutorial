@@ -26,3 +26,15 @@
 .voice-toggle input{accent-color:var(--teal);width:16px;height:16px}
 
 .output-links{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* Local-only SQLite job history. Rendering uses textContent, not HTML injection. */
+.history{margin-top:16px;padding:18px 20px}
+.history>.muted{margin:10px 0 14px}
+.history-list{display:grid;gap:7px;padding:0;margin:0;list-style:none;max-height:340px;overflow-y:auto}
+.history-row{display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.history-summary{display:grid;gap:5px;min-width:0}
+.history-summary strong{font-size:11px;overflow-wrap:anywhere}
+.history-summary small{font-size:10px;color:var(--muted);overflow-wrap:anywhere}
+.history-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.history-actions .btn{min-height:32px}
+@media(max-width:600px){.history-row{align-items:flex-start;flex-direction:column}.history-actions{width:100%;justify-content:flex-start}}
