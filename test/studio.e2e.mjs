@@ -127,6 +127,30 @@ try {
   await page.locator('#step-title').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#step-action').inputValue(), 'highlight');
   await page.screenshot({ path: path.join(root, 'studio-goal-planner.png'), fullPage: true });
+
+  // Job state persists in SQLite, even after the browser page reloads.
+  // Opening history restores an editable plan but never executes browser actions.
+  await page.reload();
+  await page.locator('#history-list .history-row').first().waitFor();
+  assert.ok(await page.locator('#history-list .history-row').count() >= 4);
+  assert.equal(await page.locator('#step-form').isVisible(), false);
+  const previousDiscovery = page.locator('#history-list .history-row')
+    .filter({ hasText: 'discover · completed' }).first();
+  await previousDiscovery.getByRole('button', { name: /Open discover job/ }).click();
+  await page.locator('#step-title').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#step-title').inputValue(), 'Intro');
+  assert.equal(await page.locator('#render').isEnabled(), false,
+    'Restored plan must require validation; never auto-execute actions');
+
+  const previousRender = page.locator('#history-list .history-row')
+    .filter({ hasText: 'render · completed' }).first();
+  await previousRender.getByRole('button', { name: /Open render job/ }).click();
+  await page.getByRole('link', { name: /Download MP4/ }).waitFor();
+  assert.ok((await page.locator('#download').getAttribute('href')).includes('/video'));
+  assert.equal(await page.locator('#history-list .history-actions')
+    .getByRole('button', { name: /^Retry/ }).count(), 0,
+  'Completed jobs must never offer a retry action');
+  await page.screenshot({ path: path.join(root, 'studio-history.png'), fullPage: true });
   assert.deepEqual(uncaught, []);
   console.log(JSON.stringify({ result: 'PASS', pageTitle: await page.title(),
     output: 'output/e2e-studio/studio-editor.png', download: download.suggestedFilename() }));
