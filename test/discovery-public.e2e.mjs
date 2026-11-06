@@ -87,6 +87,15 @@ try {
   assert.equal(safePageLink('https://example.org/external', base, new URL(base).origin), null);
   assert.equal(safePageLink(base + '/logout', base, new URL(base).origin), null);
   assert.equal(safePageLink(base + '/child?token=1', base, new URL(base).origin), null);
+  for (const encoded of [
+    '/%64elete', '/%2564elete', '/%2Fcheckout', '/%25256cogout',
+  ]) {
+    assert.equal(safePageLink(base + encoded, base, new URL(base).origin), null,
+      'Encoded destructive path must never be followed: ' + encoded);
+  }
+  assert.equal(safePageLink(base + '/c%C3%A0-ph%C3%AA', base, new URL(base).origin),
+    base + '/c%C3%A0-ph%C3%AA', 'Benign UTF-8 URLs must remain navigable');
+
 
   const failureRoot = root + '-redirect';
   await assert.rejects(explore(base + '/redirect', {
