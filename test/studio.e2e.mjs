@@ -29,6 +29,25 @@ const { server } = createStudioServer({
       },
     };
   },
+  hostingerImpl: async (_url, { outDir }) => {
+    await writeFile(path.join(outDir, 'hostinger-pricing.png'),
+      Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL6sAAAAABJRU5ErkJggg==', 'base64'));
+    return {
+      plan: {
+        ...starterPlan,
+        title: 'Hostinger pricing guide',
+        url: 'https://www.hostinger.com/vn#pricing',
+        steps: [
+          { id: 'premium', title: 'Tìm hiểu gói Premium', description: 'Giá từ DOM, không click',
+            action: 'highlight', target: { css: 'body' }, holdMs: 1000 },
+          { id: 'safe-stop', title: 'Dừng trước thanh toán', description: 'Không mua hàng',
+            action: 'stop', holdMs: 1000 },
+        ],
+      },
+      evidence: { cards: [{ name: 'Premium', monthly: '41.900 đ/th' }] },
+      report: { status: 'completed', screenshot: 'hostinger-pricing.png', warnings: [] },
+    };
+  },
   renderImpl: async (_plan, { outDir, preview }) => {
     if (!preview) await writeFile(path.join(outDir, 'tutorial.mp4'), Buffer.from('test fixture video'));
     return { status: 'completed', steps: [{ id: 'intro', status: 'completed' }],
@@ -79,6 +98,12 @@ try {
   await downloadButton.click();
   const download = await downloadPromise;
   assert.equal(download.suggestedFilename(), 'tutorial.mp4');
+  await page.getByLabel('Website URL').fill('https://www.hostinger.com/vn#pricing');
+  await page.getByRole('button', { name: /Create Hostinger pricing guide/ }).click();
+  await page.getByText('Tìm hiểu gói Premium', { exact: true }).waitFor();
+  assert.equal(await page.locator('#step-action').inputValue(), 'highlight');
+  await page.locator('#site-screenshot').waitFor({ state: 'visible' });
+  await page.screenshot({ path: path.join(root, 'studio-hostinger.png'), fullPage: true });
   assert.deepEqual(uncaught, []);
   console.log(JSON.stringify({ result: 'PASS', pageTitle: await page.title(),
     output: 'output/e2e-studio/studio-editor.png', download: download.suggestedFilename() }));
