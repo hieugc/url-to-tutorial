@@ -60,3 +60,12 @@ Mã nguồn không bao gồm node_modules, output chứa dữ liệu website, se
 - Artifact: https://github.com/hieugc/url-to-tutorial/actions/runs/42176184031/artifacts/13483621170, contains the Studio Chromium screenshot `output/e2e-studio/studio-editor.png` plus fixture recordings.
 - E2E: input URL, discover, edit step, show structural validation errors, explicitly approve an action, validate, render-job API and MP4 download.
 - Limitations of the test: Studio E2E uses isolated stub discovery/render to validate UI orchestration; the separate pipeline E2E executes real Chromium/FFmpeg on local fixture. This is **not** a real Hostinger workflow, nor a manual MacBook screenshot/video visual inspection. See issue #5 for remaining manual QA.
+
+
+## UTV-002 Hostinger pricing adapter — implementation pending CI (2026-11-06)
+
+- Source: `src/adapters/hostinger.mjs`; command: `npm run tutorial -- hostinger 'https://www.hostinger.com/vn#pricing' --out output/hostinger-pricing`.
+- Read-only extraction from observed DOM and evidence with screenshot; no purchase clicks, login, or checkout.
+- Unit tests: official host allowlist, rejection of lookalike domains, missing term/renewal not filled with assumed prices.
+- Chromium fixture E2E: 3 simulated tiers, selector verification, cookie warning, changed DOM fallback failure, H.264 video, zero purchase requests.
+- **CI and actual production-site verification must be reported separately.** Real Hostinger response may differ by promotion, language, geography and cookie modal. No claim of production video QA yet.
