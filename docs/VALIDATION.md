@@ -50,3 +50,13 @@ Mã nguồn không bao gồm node_modules, output chứa dữ liệu website, se
 - Branch evidence: visible condition selected `cart-found`; missing element selected `cart-missing`.
 - [Artifact tutorial-evidence](https://github.com/hieugc/url-to-tutorial/actions/runs/42030003927/artifacts/13415996726) contains screenshots, reports and MP4 files; retention 7 days, expires 2026-11-12.
 - This is runtime verification on the GitHub runner. It is not yet a manual visual review of the complete MP4, MacBook M3 verification, or a Hostinger production-site test.
+
+
+## UTV-003 Studio Editor — CI verification (2026-11-06)
+
+- PR: https://github.com/hieugc/url-to-tutorial/pull/14, squash-merged to main at `6e6833dd6dd51e70c6e507f6277ba1842de11918`.
+- Verified source commit: `8cdd0aa916989114022cd998b6061d75e84f73a4`.
+- GitHub Actions run: https://github.com/hieugc/url-to-tutorial/actions/runs/42176184031 — **PASS** for `npm test`, `npm run test:e2e`, and `npm run test:studio:e2e`.
+- Artifact: https://github.com/hieugc/url-to-tutorial/actions/runs/42176184031/artifacts/13483621170, contains the Studio Chromium screenshot `output/e2e-studio/studio-editor.png` plus fixture recordings.
+- E2E: input URL, discover, edit step, show structural validation errors, explicitly approve an action, validate, render-job API and MP4 download.
+- Limitations of the test: Studio E2E uses isolated stub discovery/render to validate UI orchestration; the separate pipeline E2E executes real Chromium/FFmpeg on local fixture. This is **not** a real Hostinger workflow, nor a manual MacBook screenshot/video visual inspection. See issue #5 for remaining manual QA.
