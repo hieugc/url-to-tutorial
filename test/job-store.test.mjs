@@ -157,3 +157,92 @@ test('Studio removes expired and trimmed artifacts using UUID paths only', async
     await new Promise(resolve => studio.server.close(resolve));
   }
 });
+
+
+test('Completed plans and MP4 remain recoverable after a Studio process restart without replay', async t => {
+  const root = await temp();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let discovers = 0;
+  let renders = 0;
+  const savedPlan = {
+    ...base, title: 'Persisted read-only guide', steps: [{
+      id: 'intro', title: 'Observed heading', description: 'Public fixture',
+      action: 'highlight', target: { css: 'h1' }, holdMs: 500,
+    }],
+  };
+  const first = createStudioServer({
+    outputRoot: root,
+    exploreImpl: async () => {
+      discovers++;
+      return {
+        plan: savedPlan, plans: [savedPlan],
+        report: { status: 'completed', pages: [{ title: 'Public fixture', finalUrl: base.url }] },
+      };
+    },
+    renderImpl: async (_plan, { outDir }) => {
+      renders++;
+      const video = path.join(outDir, 'tutorial.mp4');
+      await writeFile(video, 'persisted MP4 fixture');
+      return {
+        status: 'completed', steps: [],
+        video: { path: video, codec: 'h264', width: 1280, height: 720, duration: 1 },
+      };
+    },
+  });
+  const origin = await listen(first.server);
+  let discoveredId;
+  let renderedId;
+  try {
+    const discoverRequest = await post(origin, '/api/discover', {
+      url: base.url, language: 'en', maxPages: 1,
+    });
+    assert.equal(discoverRequest.status, 202);
+    discoveredId = (await discoverRequest.json()).jobId;
+    assert.equal((await done(origin, discoveredId)).status, 'completed');
+
+    const renderRequest = await post(origin, '/api/render', {
+      plan: savedPlan, confirmedExecution: false,
+    });
+    assert.equal(renderRequest.status, 202);
+    renderedId = (await renderRequest.json()).jobId;
+    assert.equal((await done(origin, renderedId)).status, 'completed');
+  } finally {
+    await new Promise(resolve => first.server.close(resolve));
+  }
+  assert.equal(discovers, 1);
+  assert.equal(renders, 1);
+
+  // The second instance has NO working renderer/discoverer. Accessing history
+  // must be a pure read; no browser operation can restart by accident.
+  const restored = createStudioServer({
+    outputRoot: root,
+    exploreImpl: async () => { throw new Error('Unapproved discovery replay after restart'); },
+    renderImpl: async () => { throw new Error('Unapproved render replay after restart'); },
+  });
+  const secondOrigin = await listen(restored.server);
+  try {
+    const history = await (await fetch(secondOrigin + '/api/jobs')).json();
+    for (const id of [discoveredId, renderedId]) {
+      const item = history.jobs.find(job => job.id === id);
+      assert.equal(item?.status, 'completed');
+      assert.equal(item.retryable, false);
+      assert.ok(!('request' in item), 'History must not expose persisted request data');
+    }
+    const discovery = await (await fetch(secondOrigin + '/api/jobs/' + discoveredId)).json();
+    assert.equal(discovery.discovery.plan.title, savedPlan.title);
+    assert.equal(discovery.discovery.plan.steps[0].action, 'highlight');
+
+    const render = await (await fetch(secondOrigin + '/api/jobs/' + renderedId)).json();
+    assert.equal(render.videoUrl, '/api/jobs/' + renderedId + '/video');
+    assert.equal(render.report.video.codec, 'h264');
+    assert.equal('path' in render.report.video, false);
+    const downloaded = await fetch(secondOrigin + render.videoUrl);
+    assert.equal(downloaded.status, 200);
+    assert.equal(await downloaded.text(), 'persisted MP4 fixture');
+    assert.equal((await post(secondOrigin, '/api/jobs/' + renderedId + '/retry', {})).status, 409);
+    assert.equal(discovers, 1);
+    assert.equal(renders, 1);
+  } finally {
+    await new Promise(resolve => restored.server.close(resolve));
+  }
+});
