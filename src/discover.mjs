@@ -127,19 +127,39 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
   try {
     if (signal?.aborted) throw Object.assign(new Error('Discovery cancelled'), { name: 'AbortError' });
     browser = await launch(headed);
-    context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 720 }, serviceWorkers: 'block',
+    });
     const page = await context.newPage();
+    // Playwright routes only the first URL in a redirect chain. Checking page.url()
+    // after goto() detects a cross-origin redirect too late: the browser may have
+    // already requested it. Fail closed on ALL main-document redirects until a
+    // redirect-aware isolated egress policy exists. This can reject canonical
+    // URL redirects; the user must provide the destination URL directly.
+    let refusedRedirect = false;
     await context.route('**/*', async route => {
       const request = route.request();
-      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
-        let target;
-        try { target = new URL(request.url()); } catch { await route.abort('blockedbyclient'); return; }
-        if (target.origin !== origin) {
+      if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) {
+        await route.continue();
+        return;
+      }
+      let target;
+      try { target = new URL(request.url()); } catch { await route.abort('blockedbyclient'); return; }
+      if (target.origin !== origin) {
+        await route.abort('blockedbyclient');
+        return;
+      }
+      try {
+        const response = await route.fetch({ maxRedirects: 0, timeout: 30000 });
+        if (response.status() >= 300 && response.status() < 400) {
+          refusedRedirect = true;
           await route.abort('blockedbyclient');
           return;
         }
+        await route.fulfill({ response });
+      } catch (error) {
+        await route.abort('failed').catch(() => {});
       }
-      await route.continue();
     });
     while (queue.length && report.pages.length < maxPages) {
       if (signal?.aborted) throw Object.assign(new Error('Discovery cancelled'), { name: 'AbortError' });
@@ -176,7 +196,9 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
           if (!visited.has(next) && !queue.includes(next) && queue.length < 50) queue.push(next);
         }
       } catch (error) {
-        entry.error = error.message;
+        entry.error = refusedRedirect
+          ? 'Redirect refused before following target; provide the final canonical URL'
+          : error.message;
         if (outDir && !entry.screenshot) {
           try {
             entry.screenshot = 'discovery-page-' + report.pages.length + '.png';
