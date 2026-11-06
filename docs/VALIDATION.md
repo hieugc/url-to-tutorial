@@ -150,3 +150,22 @@ Remaining: user MacBook visual/audio/performance acceptance; live billable AI te
 ### Webreel follow-up after run 42251096818
 
 Linux passed all 39 unit/process checks and all core/browser E2E suites, then stock Webreel still failed with missing raw MP4. Source inspection and upstream PR #12 identify a screenshot/manual-frame deadlock. The benchmark now applies a source-hash-guarded launcher compatibility patch only in a disposable installation and reports the patch in its artifact. Runtime acceptance depends on the next main CI run; this does not claim unpatched Webreel success.
+
+
+## macOS runner CI evidence and frame-level review (2026-11-07, UTC+7)
+
+- Source commit: `4b881251c7d3a827b4fe49adf4ca90ccb9b003cc`.
+- [GitHub Actions run 42259928745](https://github.com/hieugc/url-to-tutorial/actions/runs/42259928745): Linux `verify` **SUCCESS**, macOS `macos-regression` **SUCCESS**, `consolidate-audited-branches` **SUCCESS**.
+- [macOS artifact 13524827757](https://github.com/hieugc/url-to-tutorial/actions/runs/42259928745/artifacts/13524827757): 113 files including screenshots, actual MP4s, JSON reports, bilingual SRT/VTT, and Studio screenshots.
+- Independently inspected the exported step PNGs, Studio screenshot, render reports, FFprobe stream metadata and SRT files from that artifact.
+- Confirmed encoded H.264 at 1280×720, 25 fps for: demo (26.00s); multipage (55.52s); IF true (13.52s); IF false (13.64s); Hostinger **fixture** (6.52s). Observed screenshot spotlight and tooltip layouts on demo, multipage, fixture and goal output. Multipage report records same-origin navigation followed by page-2 highlights.
+- Vietnamese narration output: 9.72s H.264/AAC MP4 and 2 SRT cues; English: 10.48s H.264/AAC MP4 and 2 SRT cues. This checks tracks/files and timestamps, **not** voice naturalness, intelligibility or perceived audio-video synchronization.
+- Studio editor screenshot shows editor, validated state and controls on the macOS runner. Its solid-red preview is a **1×1 PNG test stub enlarged by the UI**, not evidence of a broken real screenshot renderer.
+- These are screenshots/fixture-based observations, **not a frame-by-frame manual viewing of the continuous video**, not actual Hostinger live-site recording on macOS and not a test on the owner's MacBook M3. Privacy checks on synthetic fixtures do not prove no leaks on arbitrary authenticated websites.
+- Branch consolidation log confirms eight exact audited feature heads removed with no other branch affected. GitHub branch inventory after cleanup lists only `main`.
+
+### New regression work (code pushed, CI must be checked separately)
+
+- UTV-004: candidate-label filtering of obvious PII, credential indicators, instruction-like text; reject unrelated AI-selected observed DOM IDs before composing a read-only plan. Commits `2084aa5`, `cfd6b36`, `cd9cda5`.
+- UTV-008: mask placeholder pseudo-elements and explicit nested rich-text within contenteditable controls; add Chromium E2E assertions. Commits `1a74872`, `3201408`.
+- New commits above are **not covered by run 42259928745**. Check the workflow attached to `3201408` for final regression results before calling those fixes verified.
