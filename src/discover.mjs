@@ -7,6 +7,24 @@ import { installPrivacy, assertSafeCapture } from './privacy.mjs';
 const BLOCKED_PATH = /(?:^|\/)(?:logout|log-out|signout|sign-out|delete|remove|checkout|payment|purchase|order|cart|unsubscribe|confirm|billing)(?:\/|$)/i;
 const ASSET_PATH = /\.(?:pdf|zip|png|jpe?g|webp|gif|svg|mp4|mov|webm|mp3|css|js)$/i;
 
+// Compare against decoded path variants without changing the actual URL sent
+// to the browser. Some sites decode encoded path segments (or nested encodings)
+// server-side, so a literal-only /logout or /delete guard can be bypassed.
+// Fail closed on invalid/deep encodings, while accepting ordinary UTF-8 paths.
+function blockedActionPath(pathname) {
+  let value = pathname;
+  for (let i = 0; i < 4; i++) {
+    if (BLOCKED_PATH.test(value)) return true;
+    if (!value.includes('%')) return false;
+    let next;
+    try { next = decodeURIComponent(value); }
+    catch { return true; }
+    if (next === value) return false;
+    value = next;
+  }
+  return BLOCKED_PATH.test(value) || value.includes('%');
+}
+
 /**
  * Only follow ordinary same-origin page links. Never click a control or
  * follow links with query parameters during automatic discovery.
@@ -16,7 +34,7 @@ export function safePageLink(href, baseUrl, origin) {
     const target = new URL(href, baseUrl);
     if (!['http:', 'https:'].includes(target.protocol) ||
         target.origin !== origin || target.username || target.password ||
-        target.search || BLOCKED_PATH.test(target.pathname) ||
+        target.search || blockedActionPath(target.pathname) ||
         ASSET_PATH.test(target.pathname)) return null;
     target.hash = '';
     return target.href;
