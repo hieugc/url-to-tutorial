@@ -78,7 +78,11 @@ test('SIGKILL recovery preserves deduplication and never replays running or queu
   assert.equal(conflict.status, 409);
   assert.equal((await post(worker.origin, '/api/jobs/' + running.body.jobId + '/retry', {})).status, 409);
   assert.equal(await readFile(path.join(root, 'executions.txt'), 'utf8'), 'render started\n');
-  const retried = await post(worker.origin, '/api/jobs/' + queued.body.jobId + '/retry', {}, 'crash-retry-001');
+  // A retry may be requested without Content-Type or JSON payload.
+  const retriedResponse = await fetch(worker.origin + '/api/jobs/' + queued.body.jobId + '/retry', {
+    method: 'POST', headers: { 'Idempotency-Key': 'crash-retry-001' },
+  });
+  const retried = { status: retriedResponse.status, body: await retriedResponse.json() };
   assert.equal(retried.status, 202);
   for (let i = 0; i < 100; i++) {
     const current = await (await fetch(worker.origin + '/api/jobs/' + retried.body.jobId)).json();
