@@ -139,6 +139,17 @@
         <button id="cancel-job" class="btn secondary" type="button" hidden>Cancel job</button>
         <a id="download" class="btn primary" href="#" hidden>Download MP4 ↓</a>
       </div></section>
+
+    <section class="history card" aria-labelledby="history-heading">
+      <div class="card-title">
+        <div><p class="eyebrow">LOCAL JOB HISTORY</p><h2 id="history-heading">Recent jobs</h2></div>
+        <button type="button" id="history-refresh" class="btn secondary">Refresh history</button>
+      </div>
+      <p class="muted">Tối đa 40 job, lưu trên máy này. Open xem lại kết quả. Chỉ job khám phá / hướng dẫn đọc-only thất bại mới được Retry; không tự chạy lại AI trả phí hay thao tác website.</p>
+      <ul id="history-list" class="history-list" aria-label="Saved Studio jobs" aria-live="polite">
+        <li class="muted">Loading saved jobs…</li>
+      </ul>
+    </section>
   </main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
