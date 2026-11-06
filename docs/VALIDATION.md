@@ -69,3 +69,13 @@ Mã nguồn không bao gồm node_modules, output chứa dữ liệu website, se
 - Unit tests: official host allowlist, rejection of lookalike domains, missing term/renewal not filled with assumed prices.
 - Chromium fixture E2E: 3 simulated tiers, selector verification, cookie warning, changed DOM fallback failure, H.264 video, zero purchase requests.
 - **CI and actual production-site verification must be reported separately.** Real Hostinger response may differ by promotion, language, geography and cookie modal. No claim of production video QA yet.
+
+
+### UTV-002 — Verified fixture + live Hostinger smoke (2026-11-06)
+
+- Fixture CI: https://github.com/hieugc/url-to-tutorial/actions/runs/42185921205 — PASS: `npm test`, `npm run test:e2e`, `npm run test:studio:e2e`, `npm run test:hostinger:e2e`.
+- Fixture artifact: https://github.com/hieugc/url-to-tutorial/actions/runs/42185921205/artifacts/13487567775. Confirms Hostinger-like DOM extraction, selector uniqueness, cookie warning, price parsing with thousands separators, no purchase requests and rendered H.264 fixture.
+- **Live smoke on real URL**: https://github.com/hieugc/url-to-tutorial/actions/runs/42186344248 — PASS on GitHub-hosted Ubuntu Chromium. `hostinger` → `validate` → `render` all succeeded.
+- Live observed 4 pricing tiers (Premium, Đơn, Không giới hạn, Cloud Startup), plus a terminal `stop-before-checkout` step. Live MP4: H.264 1280×720, 37.16 s, no audio. All 5 runtime steps completed.
+- Live screenshot, JSON DOM evidence, plan, per-step screenshots, runtime report and MP4: https://github.com/hieugc/url-to-tutorial/actions/runs/42186344248/artifacts/13488320183 (7-day retention).
+- Still pending: manual **visual** review of exported live video and pricing excerpts, full responsive/mobile check, and user MacBook M3 QA. GitHub runner IP/location and promotions may differ from user's local browser. No purchase/checkout or login was automated.
