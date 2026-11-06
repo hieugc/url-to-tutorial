@@ -11,6 +11,8 @@ const html = (challenge = '') => [
   '<input id="name" value="SECRET_USER" aria-label="Name">',
   '<input id="card" autocomplete="cc-number" value="4242424242424242">',
   '<textarea id="notes">PRIVATE_NOTE</textarea>',
+  '<input id="placeholder" placeholder="PRIVATE_PLACEHOLDER" aria-label="Reference">',
+  '<div id="editable" contenteditable="true"><span id="nested-content" style="color:red">PRIVATE_INLINE</span></div>',
   '<div id="user-info" data-sensitive="true">PRIVATE_ADDRESS</div>',
   '<p id="private-note">A custom protected note</p>',
   challenge,
@@ -36,7 +38,7 @@ try {
   await ready(page);
   await page.waitForTimeout(130);
   await assertSafeCapture(page);
-  for (const selector of ['#name', '#card', '#notes', '#dynamic']) {
+  for (const selector of ['#name', '#card', '#notes', '#dynamic', '#placeholder', '#editable', '#nested-content']) {
     const style = await page.locator(selector).evaluate(el => ({
       visibility: getComputedStyle(el).visibility,
       color: getComputedStyle(el).color,
@@ -44,6 +46,13 @@ try {
     assert.equal(style.visibility, 'visible', selector + ' must remain actionable');
     assert.match(style.color, /rgba\(0, 0, 0, 0\)/, selector + ' text must be masked');
   }
+  const placeholder = await page.locator('#placeholder').evaluate(el => ({
+    color: getComputedStyle(el, '::placeholder').color,
+    opacity: getComputedStyle(el, '::placeholder').opacity,
+  }));
+  assert.match(placeholder.color, /rgba\(0, 0, 0, 0\)/,
+    'placeholder text must be transparent before capture');
+  assert.equal(placeholder.opacity, '0', 'placeholder must not paint sensitive text');
   for (const selector of ['#user-info', '#private-note']) {
     const visibility = await page.locator(selector).evaluate(el => getComputedStyle(el).visibility);
     assert.equal(visibility, 'hidden', selector + ' must be hidden before capture');
@@ -69,7 +78,7 @@ try {
   assert.equal(rendered.status, 'completed');
   assert.equal(rendered.video.codec, 'h264');
   await access('output/e2e-privacy/step-1.png');
-  console.log(JSON.stringify({ result: 'PASS', maskCount: 6, mfaStop: true, video: rendered.video }));
+  console.log(JSON.stringify({ result: 'PASS', maskCount: 9, mfaStop: true, video: rendered.video }));
 } finally {
   await browser?.close();
   server.closeAllConnections();
