@@ -11,10 +11,10 @@ const STOP_WORDS = new Set([
 ]);
 // Public page labels are still untrusted. Do not send obvious private values,
 // credentials or instructions embedded by a website to a hosted planner.
-const BLOCKED_TEXT = /password|passcode|card number|credit card|cvv|secret|mật khẩu|số thẻ|thẻ tín dụng|otp|api[ _-]?key|access[ _-]?token|bearer\\s+|authorization|private[ _-]?key|session[ _-]?cookie|social security|ssn|cccd|căn cước|email address|địa chỉ email|số điện thoại/i;
+const BLOCKED_TEXT = /password|passcode|card number|credit card|cvv|secret|mật khẩu|số thẻ|thẻ tín dụng|otp|api[ _-]?key|access[ _-]?token|bearer\s+|authorization|private[ _-]?key|session[ _-]?cookie|social security|ssn|cccd|căn cước|email address|địa chỉ email|số điện thoại/i;
 const INSTRUCTION_TEXT = /ignore (?:all |any )?(?:previous|above|prior) (?:instructions|rules)|system prompt|developer instructions?|override (?:instructions|safety)|bỏ qua (?:mọi |các )?(?:hướng dẫn|chỉ dẫn)/i;
-const EMAIL_VALUE = /\\b[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}\\b/i;
-const LONG_NUMBER = /(?:\\+?\\d[\\s().-]*){9,}/;
+const EMAIL_VALUE = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i;
+const LONG_NUMBER = /(?:\+?\d[\s().-]*){9,}/;
 
 export function unsafeCandidateLabel(text) {
   if (typeof text !== 'string') return true;
@@ -24,7 +24,7 @@ export function unsafeCandidateLabel(text) {
 
 function normalizedText(text) {
   return String(text).toLocaleLowerCase('vi').normalize('NFD')
-    .replace(/[\\u0300-\\u036f]/g, '');
+    .replace(/[\u0300-\u036f]/g, '');
 }
 
 function clean(text, max = 160) {
