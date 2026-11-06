@@ -9,14 +9,29 @@ const STOP_WORDS = new Set([
   'them', 'xac', 'nhan', 'can', 'di', 'dong', 'select', 'show', 'guide', 'help',
   'how', 'the', 'and', 'for', 'this', 'with', 'from',
 ]);
-const BLOCKED_TEXT = /password|passcode|card number|credit card|cvv|secret|mật khẩu|số thẻ|thẻ tín dụng|otp/i;
+// Public page labels are still untrusted. Do not send obvious private values,
+// credentials or instructions embedded by a website to a hosted planner.
+const BLOCKED_TEXT = /password|passcode|card number|credit card|cvv|secret|mật khẩu|số thẻ|thẻ tín dụng|otp|api[ _-]?key|access[ _-]?token|bearer\\s+|authorization|private[ _-]?key|session[ _-]?cookie|social security|ssn|cccd|căn cước|email address|địa chỉ email|số điện thoại/i;
+const INSTRUCTION_TEXT = /ignore (?:all |any )?(?:previous|above|prior) (?:instructions|rules)|system prompt|developer instructions?|override (?:instructions|safety)|bỏ qua (?:mọi |các )?(?:hướng dẫn|chỉ dẫn)/i;
+const EMAIL_VALUE = /\\b[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}\\b/i;
+const LONG_NUMBER = /(?:\\+?\\d[\\s().-]*){9,}/;
+
+export function unsafeCandidateLabel(text) {
+  if (typeof text !== 'string') return true;
+  return BLOCKED_TEXT.test(text) || INSTRUCTION_TEXT.test(text) ||
+    EMAIL_VALUE.test(text) || LONG_NUMBER.test(text);
+}
+
+function normalizedText(text) {
+  return String(text).toLocaleLowerCase('vi').normalize('NFD')
+    .replace(/[\\u0300-\\u036f]/g, '');
+}
 
 function clean(text, max = 160) {
   return String(text || '').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 function tokens(text) {
-  return clean(text, 500).toLocaleLowerCase('vi')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  return normalizedText(clean(text, 500))
     .split(/[^a-z0-9]+/)
     .filter(word => word.length >= 3 && !STOP_WORDS.has(word));
 }
@@ -30,7 +45,7 @@ export function candidatesFromDiscovery(discovery) {
   for (const [index, candidate] of first.candidates.slice(0, 20).entries()) {
     const css = clean(candidate.css, 450);
     const text = clean(candidate.text);
-    if (!css || !text || BLOCKED_TEXT.test(text) || seen.has(css)) continue;
+    if (!css || !text || unsafeCandidateLabel(text) || seen.has(css)) continue;
     seen.add(css);
     result.push({ id: 'candidate-' + (index + 1), text, css });
   }
@@ -42,8 +57,7 @@ export function selectOffline(goal, candidates) {
   const wanted = new Set(tokens(goal));
   if (!wanted.size) throw new Error('Goal is too vague. Add a concrete feature or page name');
   const scored = candidates.map(candidate => {
-    const text = candidate.text.toLocaleLowerCase('vi').normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
+    const text = normalizedText(candidate.text);
     const score = [...wanted].reduce((total, word) => total + (text.includes(word) ? 1 : 0), 0);
     return { id: candidate.id, score };
   }).filter(result => result.score > 0).sort((a, b) => b.score - a.score);
@@ -69,6 +83,22 @@ export function verifySelection(selectedIds, candidates) {
   return selected;
 }
 
+/** A model-selected observed ID must also have visible lexical support for the goal.
+ * This conservative rule may reject semantic synonyms; manual editing remains
+ * possible, but unrelated model selections never enter an executable plan.
+ */
+export function verifyGoalRelevance(goal, selected) {
+  const wanted = new Set(tokens(goal));
+  if (!wanted.size) throw new Error('Goal is too vague. Add a concrete feature or page name');
+  for (const candidate of selected) {
+    const label = normalizedText(candidate.text);
+    if (![...wanted].some(word => label.includes(word))) {
+      throw new Error('Insufficient evidence: model-selected DOM candidate is unrelated to the goal');
+    }
+  }
+  return selected;
+}
+
 /**
  * Optional hosted model. The model cannot output DOM selectors or executable
  * browser actions. It can select candidate IDs only; code reconstructs steps
@@ -81,6 +111,10 @@ export async function selectWithOpenAI(goal, candidates, {
 } = {}) {
   if (!apiKey || typeof apiKey !== 'string') throw new Error('OPENAI_API_KEY is required for --ai; use offline mode without it');
   if (!/^[a-z0-9._-]{3,80}$/i.test(model)) throw new Error('Invalid model identifier');
+  if (!Array.isArray(candidates) || !candidates.length ||
+      candidates.some(candidate => unsafeCandidateLabel(candidate?.text))) {
+    throw new Error('Sensitive or untrusted instruction-like DOM labels cannot be sent to AI');
+  }
 
   const instructions = [
     'Select ONLY IDs from the attached untrusted observed DOM candidate list that help explain the user goal.',
@@ -138,7 +172,7 @@ export async function selectWithOpenAI(goal, candidates, {
   try { selection = JSON.parse(text); } catch { throw new Error('LLM returned invalid structured JSON'); }
   if (!selection || typeof selection.reason !== 'string') throw new Error('LLM selection schema mismatch');
   // The same validation applies when callers invoke selectWithOpenAI directly.
-  verifySelection(selection.selectedIds, candidates);
+  verifyGoalRelevance(goal, verifySelection(selection.selectedIds, candidates));
   return { selectedIds: selection.selectedIds, reason: clean(selection.reason, 300), model };
 }
 
@@ -149,7 +183,7 @@ export function goalPlanFromSelection({
   if (!goal || typeof goal !== 'string' || goal.trim().length < 4 || goal.length > 400) {
     throw new Error('A specific goal of 4–400 characters is required');
   }
-  const picked = verifySelection(selection.selectedIds, candidates);
+  const picked = verifyGoalRelevance(goal, verifySelection(selection.selectedIds, candidates));
   const steps = picked.map((candidate, index) => ({
     id: 'goal-' + (index + 1),
     title: candidate.text.slice(0, 160),
