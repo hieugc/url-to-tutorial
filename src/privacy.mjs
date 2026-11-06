@@ -7,10 +7,11 @@ export function privacyBoot({ selectors = [] } = {}) {
   const custom = Array.isArray(selectors) ? selectors : [];
   const hide = element => {
     if (!element || !element.style) return;
-    if (element.matches('input,textarea,select,[contenteditable="true"]')) {
+    if (element.matches('input,textarea,select,[contenteditable]:not([contenteditable="false"])')) {
       // Keep controls actionable for an explicitly approved fill step, but
       // make all entered values invisible to browser capture and screenshots.
       element.style.setProperty('color', 'transparent', 'important');
+      element.style.setProperty('-webkit-text-fill-color', 'transparent', 'important');
       element.style.setProperty('text-shadow', 'none', 'important');
       element.style.setProperty('-webkit-text-security', 'disc', 'important');
     } else {
@@ -21,7 +22,7 @@ export function privacyBoot({ selectors = [] } = {}) {
   const scan = () => {
     try {
       const elements = document.querySelectorAll(
-        'input,textarea,select,[contenteditable="true"],[data-sensitive],[data-private],' +
+        'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[data-sensitive],[data-private],' +
         '[autocomplete="cc-number"],[autocomplete="one-time-code"]'
       );
       for (const el of elements) hide(el);
@@ -34,8 +35,13 @@ export function privacyBoot({ selectors = [] } = {}) {
   };
   const style = document.createElement('style');
   style.textContent =
-    'input,textarea,select,[contenteditable="true"],[data-sensitive],[data-private]' +
-    '{color:transparent!important;text-shadow:none!important;-webkit-text-security:disc!important;}' +
+    'input,textarea,select,[contenteditable]:not([contenteditable="false"]),' +
+    '[contenteditable]:not([contenteditable="false"]) *,' +
+    '[data-sensitive],[data-private]' +
+    '{color:transparent!important;-webkit-text-fill-color:transparent!important;' +
+    'text-shadow:none!important;-webkit-text-security:disc!important;}' +
+    'input::placeholder,textarea::placeholder' +
+    '{color:transparent!important;-webkit-text-fill-color:transparent!important;opacity:0!important;}' +
     '[data-sensitive],[data-private]{visibility:hidden!important;}';
   const install = () => {
     if (!document.documentElement) return;
