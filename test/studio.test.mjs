@@ -25,13 +25,18 @@ const report = {
     { finalUrl: secondPlan.url, title: secondPlan.title, candidateCount: 1, screenshot: 'discovery-page-2.png' },
   ],
 };
+let flakyAttempts = 0;
 const { server } = createStudioServer({
   outputRoot: root,
-  exploreImpl: async (_url, { outDir }) => {
+  exploreImpl: async (url, { outDir }) => {
+    if (url === 'https://sample.test/flaky' && ++flakyAttempts === 1) {
+      throw new Error('Controlled discovery failure');
+    }
     await writeFile(path.join(outDir, 'discovery-page-1.png'), Buffer.from([137, 80, 78, 71]));
     return { plan: landingPlan, plans: [landingPlan, secondPlan], report };
   },
-  goalImpl: async (_url, { outDir }) => {
+  goalImpl: async (_url, { outDir, ai }) => {
+    if (ai) throw new Error('Controlled paid-model failure');
     await writeFile(path.join(outDir, 'discovery-page-1.png'), Buffer.from([137, 80, 78, 71]));
     return {
       plan: { ...landingPlan, title: 'Goal-based guide' },
@@ -186,4 +191,45 @@ test('Studio goal planner enforces input length and serves grounded draft', asyn
   const screenshot = await fetch(origin + '/api/jobs/' + result.id + '/goal-screenshot');
   assert.equal(screenshot.status, 200);
   assert.equal(screenshot.headers.get('content-type'), 'image/png');
+});
+
+
+test('History exposes only server-approved retries and never retries paid AI or render jobs', async () => {
+  const failedRequest = await post('/api/discover', {
+    url: 'https://sample.test/flaky', maxPages: 1, language: 'vi',
+  });
+  assert.equal(failedRequest.status, 202);
+  const failedId = (await failedRequest.json()).jobId;
+  const failed = await poll(failedId);
+  assert.equal(failed.status, 'failed');
+
+  const paidRequest = await post('/api/goal', {
+    url: 'https://example.com', goal: 'Premium hosting', language: 'vi', ai: true,
+  });
+  assert.equal(paidRequest.status, 202);
+  const paidId = (await paidRequest.json()).jobId;
+  assert.equal((await poll(paidId)).status, 'failed');
+
+  const history = await (await fetch(origin + '/api/jobs')).json();
+  const safe = history.jobs.find(job => job.id === failedId);
+  const paid = history.jobs.find(job => job.id === paidId);
+  assert.equal(safe.status, 'failed');
+  assert.equal(safe.retryable, true);
+  assert.equal(paid.retryable, false);
+  assert.ok(history.jobs.some(job => job.type === 'render' && job.retryable === false));
+  assert.ok(history.jobs.every(job => !('request' in job) && !('plan' in job)),
+    'Public history must never expose persisted plan or request payloads');
+
+  const rejected = await post('/api/jobs/' + paidId + '/retry', {});
+  assert.equal(rejected.status, 409);
+  assert.equal(flakyAttempts, 1, 'No retry may happen automatically');
+
+  const retriedResponse = await fetch(origin + '/api/jobs/' + failedId + '/retry', {
+    method: 'POST',
+  });
+  assert.equal(retriedResponse.status, 202);
+  const retried = await poll((await retriedResponse.json()).jobId);
+  assert.equal(retried.status, 'completed');
+  assert.equal(flakyAttempts, 2);
+  assert.equal(retried.discovery.plan.title, landingPlan.title);
 });
