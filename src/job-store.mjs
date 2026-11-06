@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const MAX_STORED_JOBS = 40;
 const RETENTION_MS = 15 * 24 * 60 * 60 * 1000;
+const terminal = job => ['completed', 'failed', 'cancelled', 'interrupted'].includes(job.status);
 
 export class StudioJobStore {
   constructor(outputRoot) {
@@ -27,8 +28,10 @@ export class StudioJobStore {
   }
 
   all() {
-    return this.db.prepare('SELECT json FROM studio_jobs ORDER BY created_at DESC LIMIT ?')
-      .all(MAX_STORED_JOBS).map(row => JSON.parse(row.json)).reverse();
+    // Recovery/retention must see old rows too, including databases created by
+    // earlier versions. Limiting reads hid expired artifacts and active jobs.
+    return this.db.prepare('SELECT json FROM studio_jobs ORDER BY created_at, rowid')
+      .all().map(row => JSON.parse(row.json));
   }
 
   recover() {
@@ -50,14 +53,13 @@ export class StudioJobStore {
 
   expired(now = Date.now()) {
     return this.all().filter(job =>
-      ['completed', 'failed', 'cancelled', 'interrupted'].includes(job.status) &&
+      terminal(job) &&
       now - Date.parse(job.finishedAt || job.createdAt) > RETENTION_MS);
   }
 
   trim() {
-    const excess = this.db.prepare(
-      'SELECT id FROM studio_jobs ORDER BY created_at DESC LIMIT -1 OFFSET ?'
-    ).all(MAX_STORED_JOBS);
+    const jobs = this.all();
+    const excess = jobs.filter(terminal).slice(0, Math.max(0, jobs.length - MAX_STORED_JOBS));
     for (const { id } of excess) this.delete(id);
     return excess.map(({ id }) => id);
   }

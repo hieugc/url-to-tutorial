@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { chromium } from 'playwright';
 import { render } from '../src/render.mjs';
 import { command } from '../src/render.mjs';
 import { inspectVideo, compareCaptures } from '../src/benchmark.mjs';
@@ -57,8 +58,17 @@ try {
   await writeFile(configPath, JSON.stringify(config, null, 2));
   // Keep Webreel optional: it is a separate renderer under test, not part of
   // the default tutorial pipeline or a runtime dependency. The pinned CLI
-  // auto-installs its browser/ffmpeg on first use; v0.1.4 has no install command.
-  await command('npx', ['--yes', 'webreel@0.1.4', 'record', '--config', configPath]);
+  // Use the same installed browser and system FFmpeg as the baseline. Webreel's
+  // downloaded FFmpeg can fail before producing its raw MP4 (then the CLI only
+  // reports ENOENT at rename). Do not implicitly download a second toolchain.
+  process.env.CHROME_PATH ||= process.env.CHROMIUM_PATH || chromium.executablePath();
+  process.env.FFMPEG_PATH ||= (await command('which', ['ffmpeg'])).trim();
+  await writeFile(path.join(root, 'toolchain.json'), JSON.stringify({
+    chrome: process.env.CHROME_PATH, ffmpeg: process.env.FFMPEG_PATH,
+    ffmpegVersion: (await command(process.env.FFMPEG_PATH, ['-version'])).split('\n')[0],
+  }, null, 2));
+  const cliLog = await command('npx', ['--yes', 'webreel@0.1.4', 'record', '--config', configPath]);
+  await writeFile(path.join(root, 'webreel.log'), cliLog);
 
   const a = await inspectVideo(baseline.video.path);
   const b = await inspectVideo(webreelOutput);

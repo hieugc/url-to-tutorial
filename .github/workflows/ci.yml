@@ -62,3 +62,20 @@ jobs:
           name: tutorial-macos-evidence
           path: output/
           retention-days: 7
+
+  consolidate-audited-branches:
+    needs: [verify, macos-regression]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Remove only audited branches whose history is preserved in main
+        run: node scripts/consolidate-branches.mjs --apply

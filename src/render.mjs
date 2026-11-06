@@ -44,7 +44,7 @@ export function command(program, args, { signal } = {}) {
         error.name = 'AbortError';
         reject(error);
       } else if (code === 0) resolve(stdout);
-      else reject(new Error(program + ' exited ' + code + ': ' + stderr));
+      else reject(new Error(program + ' exited ' + code + ': ' + stderr + '\n' + stdout.slice(-12000)));
     });
   });
 }

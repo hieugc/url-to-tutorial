@@ -103,7 +103,7 @@ function publicReport(report) {
 /**
  * Studio is deliberately local-only and single-worker. URLs are trusted inputs
  * controlled by the operator; do not expose this process to an untrusted network.
- * Production egress isolation, durable jobs and login are separate tasks.
+ * Production egress isolation and multi-tenant login are separate tasks.
  */
 export function createStudioServer({
   outputRoot = path.resolve('output/studio'),
@@ -115,14 +115,18 @@ export function createStudioServer({
 } = {}) {
   const store = new StudioJobStore(outputRoot);
   const jobs = new Map(store.recover().map(job => [job.id, job]));
-  // Bounded retention; path is derived from server-issued UUID only.
-  for (const expired of store.expired()) {
-    if (/^[a-f0-9-]{36}$/i.test(expired.id)) {
-      rmSync(path.join(path.resolve(outputRoot), expired.id), { recursive: true, force: true });
-      jobs.delete(expired.id);
-      store.delete(expired.id);
+  function pruneHistory() {
+    const expiredIds = store.expired().map(job => job.id);
+    for (const id of expiredIds) store.delete(id);
+    for (const id of [...expiredIds, ...store.trim()]) {
+      // Never trust a persisted outputDir when removing files.
+      if (/^[a-f0-9-]{36}$/i.test(id)) {
+        rmSync(path.join(path.resolve(outputRoot), id), { recursive: true, force: true });
+      }
+      jobs.delete(id);
     }
   }
+  pruneHistory();
   let queue = Promise.resolve();
 
   function start(type, work, requestSnapshot = null, key = null) {
@@ -154,10 +158,7 @@ export function createStudioServer({
       abortController: new AbortController() };
     store.save(job);
     jobs.set(id, job);
-    for (const [key, old] of jobs) {
-      if (jobs.size <= 40) break;
-      if (['completed', 'failed'].includes(old.status)) jobs.delete(key);
-    }
+    pruneHistory();
     queue = queue.catch(() => {}).then(async () => {
       if (job.status === 'cancelled') return;
       job.status = 'running';
@@ -179,7 +180,7 @@ export function createStudioServer({
       } finally {
         job.finishedAt = new Date().toISOString();
         store.save(job);
-        store.trim();
+        pruneHistory();
       }
     });
     return job;
@@ -340,6 +341,7 @@ export function createStudioServer({
           job.error = 'Cancelled before execution';
           job.finishedAt = new Date().toISOString();
           store.save(job);
+          pruneHistory();
           return json(res, 200, { id: job.id, status: job.status });
         }
         if (job.status === 'running' && ['render', 'preview', 'discover', 'goal', 'hostinger'].includes(job.type)) {

@@ -17,9 +17,9 @@ npm run demo -- --narrate --out output/narrated-demo
 
 Studio has **TTS VI/EN + subtitles** beside Render MP4 and separate MP4/SRT/VTT download links. The existing plan remains editable and unchanged. No cloud TTS API key or GPU is needed.
 
-**UTV-007 – SQLite job history.** `output/studio/studio-jobs.sqlite` stores job status and redacted plan snapshots. A Studio restart marks unfinished jobs `interrupted` and **never** replays browser actions. `GET /api/jobs` lists history. `POST /api/jobs/:id/cancel` cancels queued jobs only. `POST /api/jobs/:id/retry` permits only failed/cancelled/interrupted read-only discovery, Hostinger or **offline** goal jobs. Active in-flight browser jobs are not yet safely cancellable. Finished metadata/artifacts older than 15 days are cleaned at Studio startup, not by a background service. Values from `fill` actions are redacted from saved snapshots; do not place secrets in any source plan.
+**UTV-007 – SQLite job history.** `output/studio/studio-jobs.sqlite` stores job status and redacted plan snapshots. A Studio restart marks unfinished jobs `interrupted` and **never** replays browser actions. `GET /api/jobs` lists history. `POST /api/jobs/:id/cancel` cancels queued jobs and cooperatively stops running browser/encoder jobs. `POST /api/jobs/:id/retry` permits only failed/cancelled/interrupted read-only discovery, Hostinger or **offline** goal jobs. Running cancellation is persisted after the worker unwinds. Terminal metadata and artifacts are pruned together at startup and job lifecycle checkpoints (15 days / 40 stored jobs); active jobs are never trimmed. There is no background cleanup timer. Values from `fill` actions are redacted from saved snapshots; do not place secrets in any source plan.
 
-**UTV-008 – Privacy baseline.** Each render uses an isolated fresh browser context. A document-start script masks displayed form values (input/textarea/select/contenteditable) and hides `[data-sensitive]` / `[data-private]` regions. The plan can provide up to 20 CSS `redactSelectors`. A visible CAPTCHA/MFA/OTP challenge halts capture. Cross-origin iframe targets and popups remain unsupported. This does **not** certify arbitrary authenticated sites as private: ordinary page text outside marked regions may remain visible.
+**UTV-008 – Privacy baseline.** Each render uses an isolated fresh browser context. A document-start script masks displayed form values (input/textarea/select/contenteditable) and hides `[data-sensitive]` / `[data-private]` regions. The plan can provide up to 20 CSS `redactSelectors`. A visible CAPTCHA/MFA/OTP challenge halts capture. Explicit cross-origin iframe targets are supported; popups remain unsupported. This does **not** certify arbitrary authenticated sites as private: ordinary page text outside marked regions may remain visible.
 
 **UTV-006 – File-level capture benchmark.** FFprobe measures actual decoded-frame timestamps, FPS and inter-frame jitter on an existing video:
 
@@ -29,7 +29,7 @@ npm run benchmark -- output/e2e-demo/tutorial.mp4
 npm run benchmark -- output/playwright.mp4 output/webreel.mp4 output/comparison.json
 ```
 
-This does **not** integrate Webreel or establish true browser-rendering FPS or Mac CPU/RAM use. A comparable Webreel capture remains an open QA task.
+An optional Webreel A/B harness is described below. File metrics do not establish true browser-rendering FPS or Mac CPU/RAM use; visual and hardware acceptance remain open.
 
 **UTV-009 – Cloud API not enabled.** `src/cloud-egress.mjs` has a public URL/DNS preflight helper and tests but is **not** a complete SSRF defense. Redirects, browser subrequests and DNS rebinding require real network egress isolation in a separate worker. Current Studio only binds to 127.0.0.1 without public auth, tenant isolation or billing. **Do not expose it on the internet.** See [security design](docs/CLOUD-SECURITY.md).
 
@@ -69,7 +69,7 @@ The login context has no video recording. After the user confirms in the termina
 
 ### Webreel A/B capture
 
-`npm run test:webreel:e2e` downloads Webreel CLI v0.1.4 ephemerally with `npx`, records the same local fixture at 1280×720, and compares its output with the Playwright/Driver.js video using FFprobe. Results and both videos are written to `output/webreel-ab/`. Webreel is not a default runtime dependency or replacement renderer; its cursor/HUD differs from Driver.js, so a human visual comparison remains required. Upstream: [vercel-labs/webreel](https://github.com/vercel-labs/webreel) (Apache-2.0).
+`npm run test:webreel:e2e` downloads Webreel CLI v0.1.4 ephemerally with `npx`, reuses installed Playwright Chromium and system FFmpeg, records the same local fixture at 1280×720, and compares its output with the Playwright/Driver.js video using FFprobe. Results and both videos are written to `output/webreel-ab/`. Webreel is not a default runtime dependency or replacement renderer; its cursor/HUD differs from Driver.js, so a human visual comparison remains required. Upstream: [vercel-labs/webreel](https://github.com/vercel-labs/webreel) (Apache-2.0).
 
 ### Discovery safety
 
@@ -91,7 +91,7 @@ npm run studio
 
 Studio chạy trên `127.0.0.1:4173`; không expose qua public internet, tunnel hoặc reverse proxy. Nhập **URL đáng tin cậy**: phiên bản local chưa có sandbox mạng ngăn SSRF/private IP, không dùng để mở cho người khác gửi URL tự do. Các bước có tác động cần đánh dấu `reviewed: true` **và** xác nhận lại trước preview/render. Preview vẫn thực thi action thật! Hệ thống không tự thực hiện mua hàng, thanh toán hay đăng ký. Không dùng mật khẩu, thông tin thẻ hoặc dữ liệu nhạy cảm thật trong plan/video.
 
-Tính năng hiện có: form editor, thay đổi thứ tự bằng nút ↑/↓, JSON nâng cao, danh sách lỗi schema/review, xem ảnh snapshot sau discover, job status, link tải MP4. Nếu chuyển thứ tự làm sai luồng branch, validator sẽ báo lỗi. Job chỉ lưu trong RAM trong phiên chạy; công việc đang chạy không thể resume sau restart. Trình duyệt mới mở trên máy (preview headed) cần môi trường desktop. Chưa có drag-and-drop trực tiếp, AI planner, TTS, lưu project nhiều phiên, hoặc cloud multiuser.
+Tính năng hiện có: form editor, thay đổi thứ tự bằng nút ↑/↓, JSON nâng cao, danh sách lỗi schema/review, xem ảnh snapshot sau discover, job status, link tải MP4. Nếu chuyển thứ tự làm sai luồng branch, validator sẽ báo lỗi. Lịch sử job lưu bằng SQLite qua nhiều phiên; khi restart, job chưa xong chuyển thành interrupted và không tự thực thi lại action. Trình duyệt mới mở trên máy (preview headed) cần môi trường desktop. Đã có goal planner, TTS VI/EN, hủy job đang chạy và lịch sử job. Chưa có drag-and-drop trực tiếp, project workspace nhiều phiên hoặc cloud multiuser.
 
 ## Goal-based Guide Planner — offline và AI chọn bước (bản nháp)
 
@@ -151,7 +151,7 @@ npm run tutorial -- render output/my-guide/plan.json --out output/render-01
 
 `--headed` mở cửa sổ trình duyệt. `preview` chạy có giao diện nhưng không encode video. `CHROMIUM_PATH` chỉ định Chromium đã cài sẵn khi cần; vẫn cần FFmpeg recorder của Playwright (`npx playwright install ffmpeg`).
 
-Mỗi lần chạy nên dùng thư mục output mới. Kết quả: `tutorial.mp4`, `report.json`, ảnh `step-N.png`, bản ghi WebM trong `raw/`. Lệnh `discover` và `run` còn xuất `plan.json` và `discovery-report.json` (HTTP status, URL cuối, title, số lượng phần tử, selectors, ảnh `discovery-page-N.png`). Nếu không tìm thấy phần tử, báo lỗi nhưng vẫn lưu evidence để chẩn đoán. Video MVP không có âm thanh. Ảnh/video ghi nội dung đang hiển thị: chỉ dùng dữ liệu demo nếu sẽ chia sẻ.
+Mỗi lần chạy nên dùng thư mục output mới. Kết quả: `tutorial.mp4`, `report.json`, ảnh `step-N.png`, bản ghi WebM trong `raw/`. Lệnh `discover` và `run` còn xuất `plan.json` và `discovery-report.json` (HTTP status, URL cuối, title, số lượng phần tử, selectors, ảnh `discovery-page-N.png`). Nếu không tìm thấy phần tử, báo lỗi nhưng vẫn lưu evidence để chẩn đoán. Video mặc định không có âm thanh; dùng `--narrate` để thêm TTS VI/EN và phụ đề. Ảnh/video ghi nội dung đang hiển thị: chỉ dùng dữ liệu demo nếu sẽ chia sẻ.
 
 ## Hai chế độ
 
@@ -186,7 +186,7 @@ Ví dụ một bước thao tác:
 | [FFmpeg](https://ffmpeg.org/) | Chuyển WebM → H.264 MP4, faststart; ffprobe kiểm tra file | Đã tích hợp qua process, không dùng shell để ghép lệnh |
 | [Zod](https://github.com/colinhacks/zod) | Schema và kiểm tra kịch bản | Đã tích hợp |
 | [playwright-tests-as-tutorials](https://github.com/MLgentDev/playwright-tests-as-tutorials) | Tham khảo Driver.js + Playwright + ghép giọng đọc | Đã đọc README; không fork/copy mã |
-| [webreel](https://github.com/vercel-labs/webreel) | Ứng viên nâng cấp capture, cursor, keystroke overlay | Chưa tích hợp; cần thử adapter Driver.js trước |
+| [webreel](https://github.com/vercel-labs/webreel) | Ứng viên nâng cấp capture, cursor, keystroke overlay | Có harness A/B riêng; chưa thay thế renderer mặc định |
 | [web-application-tutorial-recorder](https://github.com/HDRUK/web-application-tutorial-recorder) | Tham khảo editor ghi/chỉnh/replay hành trình | Chưa tích hợp |
 
 Không cần .NET/PostgreSQL/Redis để chứng minh pipeline đầu tiên. Node dùng cùng hệ sinh thái browser, Driver.js và các repo tham khảo. Có thể đặt API ASP.NET Core bên ngoài worker nếu sau này gắn vào hạ tầng hiện có.
@@ -203,9 +203,9 @@ E2E khởi chạy website fixture cục bộ, kiểm tra URL discovery → rende
 ## Giới hạn cần biết
 
 - Website đổi DOM có thể làm selector tự sinh không còn đúng. Dùng role + tên chính xác hoặc id ổn định cho kịch bản quan trọng; không tự chọn phần tử đầu tiên nếu selector trùng.
-- Chỉ tài liệu chính, chưa hỗ trợ iframe, popup, session đăng nhập, CAPTCHA, file upload và nhiều tab. Site CSP chặn injection thì báo lỗi; không hạ bảo mật của site.
+- Hỗ trợ tài liệu chính, iframe chỉ định rõ và đăng nhập thủ công qua CLI; chưa hỗ trợ popup, file upload hoặc nhiều tab. Gặp CAPTCHA/MFA thì dừng. Site CSP chặn injection thì báo lỗi; không hạ bảo mật của site.
 - Có chuyển động con trỏ và cuộn mượt, nhưng Playwright video không phải trình render timeline cố định 60 fps. Không biến video 25 fps thành “60 fps thật” bằng cách chỉ đổi thông số encode.
-- Hiện đã có Studio HTTP cục bộ, goal planner offline/optional AI, TTS VI/EN, SQLite job history và hủy queued-job; chưa có SaaS multi-tenant, active cancel hoặc GUI timeline hoàn chỉnh.
+- Hiện đã có Studio HTTP cục bộ, goal planner offline/optional AI, TTS VI/EN, SQLite job history và hủy queued/running job; chưa có SaaS multi-tenant hoặc GUI timeline hoàn chỉnh.
 - CLI được chạy trên máy cá nhân với URL do người vận hành tin cậy. Không expose CLI thành dịch vụ công khai nhận URL tùy ý; cloud worker cần cách ly mạng/SSRF/credentials trước.
 
 Xem [kiến trúc và API dự kiến](docs/ARCHITECTURE.md), [đánh giá repo có sẵn](docs/REUSE.md), [backlog](docs/BACKLOG.md) và [kết quả kiểm tra](docs/VALIDATION.md).

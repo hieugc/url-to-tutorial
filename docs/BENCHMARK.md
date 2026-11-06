@@ -2,7 +2,7 @@
 
 ## Current state
 
-Existing recording: Playwright Chromium + Driver.js spotlight + FFmpeg H.264. Webreel is **not integrated**. An optional file-level analysis tool, src/benchmark.mjs, reports real FFprobe frames and inter-frame intervals without pretending that a 60fps video has 60fps of real UI movement.
+Existing recording: Playwright Chromium + Driver.js spotlight + FFmpeg H.264. Webreel has an optional A/B harness; it is not the default renderer. An optional file-level analysis tool, src/benchmark.mjs, reports real FFprobe frames and inter-frame intervals without pretending that a 60fps video has 60fps of real UI movement.
 
 ## Baseline command
 
@@ -41,3 +41,7 @@ Artifacts are written to output/webreel-ab/ including the Playwright MP4, webree
 Webreel remains optional because its upstream project has open reports affecting Apple Silicon recording. Do not infer MacBook M3 compatibility from an Ubuntu runner. Check the upstream issue tracker and release notes before adopting it in the default pipeline:
 - https://github.com/vercel-labs/webreel/issues
 - https://github.com/vercel-labs/webreel/releases
+
+### Toolchain reliability
+
+The A/B harness uses the installed Playwright Chromium and system FFmpeg via Webreel's `CHROME_PATH` / `FFMPEG_PATH` options. It records their paths and FFmpeg version in `toolchain.json`, avoiding a second implicit browser/encoder download. The previous main CI failed because Webreel did not produce its temporary MP4 before the rename step; see run 42211557034. The comparison still fails when no valid candidate video is produced; no skip or fabricated baseline is used.

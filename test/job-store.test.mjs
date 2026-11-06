@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { StudioJobStore } from '../src/job-store.mjs';
@@ -102,4 +102,58 @@ test('Queued jobs may cancel and read-only discovery may retry; render never aut
     const saved = persisted.all().find(job => job.type === 'render');
     assert.equal(saved.request.plan.steps[0].value, '[redacted]');
   } finally { persisted.close(); }
+});
+
+test('Retention sees expired rows beyond the newest 40 and never trims active work', async t => {
+  const root = await temp();
+  const store = new StudioJobStore(root);
+  t.after(() => { store.close(); return rm(root, { recursive: true, force: true }); });
+  const old = '2020-01-01T00:00:00.000Z';
+  store.save({ id: 'active', status: 'running', createdAt: old });
+  store.save({ id: 'expired', status: 'completed', createdAt: old, finishedAt: old });
+  for (let i = 0; i < 42; i++) {
+    store.save({ id: 'terminal-' + i, status: i % 2 ? 'cancelled' : 'interrupted',
+      createdAt: new Date().toISOString(), finishedAt: new Date().toISOString() });
+  }
+  assert.equal(store.all().length, 44);
+  assert.deepEqual(store.expired().map(job => job.id), ['expired']);
+  const removed = store.trim();
+  assert.equal(removed.length, 4);
+  assert.ok(removed.includes('expired'));
+  assert.ok(!removed.includes('active'));
+  assert.equal(store.all().length, 40);
+  assert.equal(store.all().find(job => job.id === 'active').status, 'running');
+});
+
+test('Studio removes expired and trimmed artifacts using UUID paths only', async t => {
+  const root = await temp();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const protectedFile = path.join(root, 'keep.txt');
+  await writeFile(protectedFile, 'Do not remove a stored arbitrary outputDir');
+  const store = new StudioJobStore(root);
+  const ids = [];
+  for (let i = 0; i < 43; i++) {
+    const id = '00000000-0000-4000-8000-' + String(i).padStart(12, '0');
+    ids.push(id);
+    await mkdir(path.join(root, id));
+    await writeFile(path.join(root, id, 'tutorial.mp4'), 'fixture');
+    const when = i === 0 ? '2020-01-01T00:00:00.000Z' : new Date().toISOString();
+    store.save({ id, status: i % 2 ? 'cancelled' : 'interrupted', createdAt: when,
+      finishedAt: when, outputDir: protectedFile });
+  }
+  store.close();
+  const studio = createStudioServer({ outputRoot: root });
+  await listen(studio.server);
+  try {
+    assert.equal(studio.jobs.size, 40);
+    assert.equal(studio.store.all().length, 40);
+    for (const id of ids.slice(0, 3)) {
+      await assert.rejects(access(path.join(root, id)), { code: 'ENOENT' });
+      assert.ok(!studio.jobs.has(id));
+    }
+    await access(path.join(root, ids.at(-1), 'tutorial.mp4'));
+    await access(protectedFile);
+  } finally {
+    await new Promise(resolve => studio.server.close(resolve));
+  }
 });

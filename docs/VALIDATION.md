@@ -131,3 +131,17 @@ Remaining acceptance that cannot be certified by GitHub CI alone:
 - Cloud API production deployment, tenant credentials, isolated worker egress, independent SSRF/security review and billing configuration.
 
 Do not close the affected issues until the human/production gates are supplied.
+
+
+## Main consolidation and UTV-007 follow-up (2026-11-06)
+
+- Audit: all six squashed feature heads have trees identical to their merged PR commits; the other two heads are already ancestors of main. See `docs/branch-consolidation.json` for exact heads. The consolidation commit preserves original branch ancestry as merge parents and keeps the latest main code.
+- CI run [42211557034](https://github.com/hieugc/url-to-tutorial/actions/runs/42211557034): macOS regression SUCCESS; Linux core/browser/narration/privacy/session/discovery SUCCESS, Webreel A/B FAILED with a missing temporary MP4. Previous generic "CI candidate" claims should be read with this result.
+- Follow-up: reuse installed Chromium/system FFmpeg for Webreel; retain CLI stdout in failure diagnostics.
+- UTV-007: expired and trimmed metadata/artifacts are now removed together, including cancelled/interrupted history and old rows beyond the latest 40. Active jobs are never trimmed; removal paths are derived from UUIDs, never stored outputDir values.
+- Local process regression PASS: kill a real Studio child process with SIGKILL while one reviewed render is running and discovery is queued; restart SQLite; both become interrupted, the same idempotency key returns the original job, changed input returns 409, browser actions cannot retry, and explicit read-only retry runs exactly once. External browser execution is replaced with an observable test worker for this crash test.
+- Local retention and branch-cleanup regression PASS. The cleanup test uses a temporary bare Git repository: refuse unmerged or changed heads, leave unaudited branches/main untouched, and atomically delete only audited merged heads using exact leases.
+- Full browser verification must be read from the new main CI run. This workspace's Chromium launch is blocked by Unix socket restrictions; no claim of local browser or user M3 validation is made.
+- Branch removal is gated on successful Linux and macOS CI. Cleanup only touches the eight exact heads in the audited manifest; absent branches are skipped and changed branches are retained with an error.
+
+Remaining: user MacBook visual/audio/performance acceptance; live billable AI test; cloud deployment/isolation/security acceptance. Issues remain open where those gates apply.
