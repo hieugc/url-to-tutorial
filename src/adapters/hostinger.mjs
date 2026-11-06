@@ -58,8 +58,17 @@ export async function inspectHostingerPage(page) {
     const matchesName = text => definitions.find(plan =>
       plan.names.some(name => name.toLocaleLowerCase('vi') === text.toLocaleLowerCase('vi')));
     const MONTHLY = /\b[\d][\d., ]{0,15}\s*(?:đ|₫)\s*\/\s*(?:th|tháng)\b/i;
-    const RENEW = /(?:gia hạn(?:\s+với)?|renews?\s+at)[^.!?]{0,130}/i;
-    const BILLING = /(?:nhận\s+\d+\s+tháng|thanh toán\s+trước|hôm nay bạn trả|today you pay|get\s+\d+\s+months)[^.!?]{0,155}/i;
+    const RENEW = /(?:gia hạn(?:\s+với)?|renews?\s+at)/i;
+    const BILLING = /(?:nhận\s+\d+\s+tháng|thanh toán\s+trước|hôm nay bạn trả|today you pay|get\s+\d+\s+months)/i;
+    // A dot inside 2.011.200 is a thousands separator, not a sentence
+    // boundary. Stop at punctuation followed by the next capitalized phrase.
+    const phrase = (text, start) => {
+      const index = text.search(start);
+      if (index < 0) return null;
+      const fragment = text.slice(index, index + 200);
+      const end = fragment.search(/\.(?=\s+[A-ZÀ-Ỹ])/u);
+      return (end < 0 ? fragment : fragment.slice(0, end)).trim().slice(0, 160);
+    };
     const sourceNodes = [...document.querySelectorAll(
       'h1,h2,h3,h4,h5,h6,[role="heading"],strong,b,p,span,div'
     )].slice(0, 7000);
@@ -84,8 +93,8 @@ export async function inspectHostingerPage(page) {
           .filter(el => visible(el) && matchesName(normal(el.innerText)) && el !== node);
         if (otherLabels.length > 1) continue;
         const monthly = fullText.match(MONTHLY)?.[0] || null;
-        const renewal = fullText.match(RENEW)?.[0] || null;
-        const billing = fullText.match(BILLING)?.[0] || null;
+        const renewal = phrase(fullText, RENEW);
+        const billing = phrase(fullText, BILLING);
         const hasCTA = [...current.querySelectorAll('button,a')]
           .some(el => /^(bắt đầu|chọn gói|chọn|mua ngay|start now|get started|choose plan)$/i.test(normal(el.innerText)));
         const score = (renewal ? 10 : 0) + (billing ? 8 : 0) + (hasCTA ? 4 : 0) + Math.min(fullText.length / 500, 3) - depth / 100;
