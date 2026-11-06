@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { explore } from './discover.mjs';
+import { createHostingerGuide, validateHostingerUrl } from './adapters/hostinger.mjs';
 import { assemblePages } from './assemble.mjs';
 import { HttpUrl, Plan, validatePlanForExecution } from './plan.mjs';
 import { render } from './render.mjs';
@@ -85,6 +86,7 @@ function publicReport(report) {
 export function createStudioServer({
   outputRoot = path.resolve('output/studio'),
   exploreImpl = explore,
+  hostingerImpl = createHostingerGuide,
   assembleImpl = assemblePages,
   renderImpl = render,
 } = {}) {
@@ -154,6 +156,9 @@ export function createStudioServer({
         if (job.status === 'completed' && job.type === 'discover') {
           data.discovery = { plan: job.result.plan, plans: job.result.plans, report: job.result.report };
         }
+        if (job.status === 'completed' && job.type === 'hostinger') {
+          data.hostinger = { plan: job.result.plan, evidence: job.result.evidence, report: job.result.report };
+        }
         if (job.status === 'completed' && job.type === 'render') data.videoUrl = '/api/jobs/' + job.id + '/video';
         return json(res, 200, data);
       }
@@ -189,6 +194,20 @@ export function createStudioServer({
         return createReadStream(file).pipe(res);
       }
 
+      const pricingImage = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/hostinger-screenshot$/i);
+      if (req.method === 'GET' && pricingImage) {
+        const job = jobs.get(pricingImage[1]);
+        if (!job || job.type !== 'hostinger' || job.status !== 'completed' || !job.result.report.screenshot) {
+          return json(res, 404, { error: 'Hostinger pricing screenshot not found' });
+        }
+        const file = path.join(job.outputDir, 'hostinger-pricing.png');
+        let info;
+        try { info = await stat(file); }
+        catch { return json(res, 404, { error: 'Pricing screenshot missing' }); }
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': info.size, 'Cache-Control': 'no-store' });
+        return createReadStream(file).pipe(res);
+      }
+
       if (req.method !== 'POST') return json(res, 404, { error: 'Unknown route' });
       const body = await bodyJson(req);
 
@@ -196,6 +215,18 @@ export function createStudioServer({
         const checked = checkPlan(body.plan);
         const { plan: _plan, ...result } = checked;
         return json(res, checked.valid ? 200 : 422, result);
+      }
+
+      if (pathname === '/api/hostinger') {
+        let url;
+        try { url = validateHostingerUrl(body.url); }
+        catch (error) { return json(res, 422, { error: error.message }); }
+        const language = body.language ?? 'vi';
+        if (!['vi', 'en'].includes(language)) return json(res, 422, { error: 'language must be vi or en' });
+        const job = start('hostinger', current => hostingerImpl(url, {
+          outDir: current.outputDir, language,
+        }));
+        return json(res, 202, { jobId: job.id, status: job.status });
       }
 
       if (pathname === '/api/discover') {
