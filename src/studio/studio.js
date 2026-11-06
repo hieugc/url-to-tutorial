@@ -31,6 +31,7 @@ function switchBusy(busy) {
   state.busy = busy;
   $('discover').disabled = busy;
   $('hostinger-guide').disabled = busy;
+  $('goal-generate').disabled = busy;
   $('import').disabled = busy;
   $('add').disabled = busy || !state.plan;
   $('validate').disabled = busy || !state.plan;
@@ -357,6 +358,32 @@ async function discover(event) {
   } finally { switchBusy(false); }
 }
 
+async function goalGuide() {
+  const url = $('url').value.trim();
+  const goal = $('goal-text').value.trim();
+  if (!url || goal.length < 4) return toast('Enter a website URL and specific goal', true);
+  switchBusy(true);
+  try {
+    const job = await api('/api/goal', {
+      url, goal, language: $('language').value, ai: $('goal-ai').checked,
+    });
+    const result = await awaitJob(job.jobId, 'Planning from observed DOM');
+    if (!result.goal?.plan) throw new Error('Goal planner did not return an editable plan');
+    loadPlan(result.goal.plan, { discoveryJobId: null, pages: 1 });
+    $('assemble').hidden = true;
+    $('preview-figure').hidden = false;
+    $('site-screenshot').src = '/api/jobs/' + job.jobId + '/goal-screenshot';
+    showJob('Goal draft created', result.goal.report.provider + ' selection. ' +
+      result.goal.evidence.selectedIds.length + ' grounded highlights. Review before publishing.');
+    toast('Goal draft ready: highlight-only, no browser actions');
+  } catch (error) {
+    toast(error.message, true);
+    showJob('Goal planner failed', error.message);
+  } finally {
+    switchBusy(false);
+  }
+}
+
 async function hostingerGuide() {
   const url = $('url').value.trim();
   if (!url) return toast('Enter a Hostinger Vietnam URL first', true);
@@ -420,6 +447,7 @@ async function execute(type) {
 
 $('discover-form').addEventListener('submit', discover);
 $('hostinger-guide').addEventListener('click', hostingerGuide);
+$('goal-generate').addEventListener('click', goalGuide);
 $('step-form').addEventListener('submit', event => { event.preventDefault(); commitStep(true); });
 $('target-type').addEventListener('change', targetFields);
 $('step-action').addEventListener('change', actionFields);
