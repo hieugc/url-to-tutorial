@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { explore } from './discover.mjs';
+import { createHostingerGuide } from './adapters/hostinger.mjs';
 import { assembleDiscovery } from './assemble.mjs';
 import { render } from './render.mjs';
 import { Plan, validatePlanForExecution } from './plan.mjs';
@@ -31,6 +32,16 @@ try {
     console.log('Discovery evidence: ' + path.join(outDir, 'discovery-report.json'));
     console.log('Plan: ' + outDir + '/plan.json (overview; no automatic clicks)');
     if (action === 'run') console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
+  } else if (action === 'hostinger') {
+    const { plan, evidence, report } = await createHostingerGuide(input, {
+      outDir, headed: values.headed, language: values.language,
+    });
+    await writeFile(path.join(outDir, 'plan.json'), JSON.stringify(plan, null, 2));
+    await writeFile(path.join(outDir, 'hostinger-evidence.json'), JSON.stringify({ ...report, evidence }, null, 2));
+    console.log('Read-only Hostinger guide: ' + plan.steps.length + ' steps');
+    console.log('Verified DOM evidence: ' + path.join(outDir, 'hostinger-evidence.json'));
+    console.log('Editable plan: ' + path.join(outDir, 'plan.json'));
+    console.log('This does not click any purchase or checkout button.');
   } else if (action === 'assemble') {
     const plan = await assembleDiscovery(input);
     await mkdir(outDir, { recursive: true });
@@ -61,7 +72,7 @@ try {
       console.log(JSON.stringify(await render(plan, { outDir, headed: values.headed }), null, 2));
     } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   } else {
-    console.log('Commands: discover <url> | assemble <discovery-dir> | run <url> | validate <plan.json> | preview <plan.json> | render <plan.json> | demo\nOptions: --out output/name --headed --language vi|en --max-pages 1..5');
+    console.log('Commands: hostinger <https://www.hostinger.com/vn#pricing> | discover <url> | assemble <discovery-dir> | run <url> | validate <plan.json> | preview <plan.json> | render <plan.json> | demo\nOptions: --out output/name --headed --language vi|en --max-pages 1..5');
     if (action) process.exitCode = 1;
   }
 } catch (error) { console.error(error.message); process.exitCode = 1; }

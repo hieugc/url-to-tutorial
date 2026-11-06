@@ -3,7 +3,7 @@
 | ID | Hạng mục | Tiêu chí nghiệm thu | Trạng thái |
 |---|---|---|---|
 | [UTV-001](https://github.com/hieugc/url-to-tutorial/issues/3) | CLI core + Driver.js + MP4 | Fixture URL → plan → video H.264, ảnh các bước, báo lỗi selector | Implemented; xem VALIDATION.md |
-| [UTV-002](https://github.com/hieugc/url-to-tutorial/issues/4) | Hostinger adapter | Chạy trên site thật, ghi DOM evidence, không bấm thanh toán, duyệt video | Chưa làm |
+| [UTV-002](https://github.com/hieugc/url-to-tutorial/issues/4) | Hostinger adapter | Chạy trên site thật, ghi DOM evidence, không bấm thanh toán, duyệt video | Fixture + live Chromium CI PASS; manual video review and Mac QA pending |
 | [UTV-010](https://github.com/hieugc/url-to-tutorial/issues/12) | Discovery evidence + multi-page read-only | Status HTTP, screenshot, plan riêng mỗi trang, giới hạn và an toàn điều hướng | CI PASS; local QA pending |
 | [UTV-011](https://github.com/hieugc/url-to-tutorial/issues/13) | Conditional workflow + multi-page assembly | IF/ELSE visible/hidden, forward-only graph, review gate, one continuous MP4 | CI PASS; local QA pending |
 | [UTV-003](https://github.com/hieugc/url-to-tutorial/issues/5) | Studio editor | Nhập URL, sửa/reorder steps, preview, download MP4 | Merged to main; CI unit+Chromium PASS; macOS/manual QA pending |
