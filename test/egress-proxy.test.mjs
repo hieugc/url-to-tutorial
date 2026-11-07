@@ -134,6 +134,7 @@ test('Egress proxy pins the single validated DNS answer and relays CONNECT bytes
 
   assert.match(received, /200 Connection Established/);
   assert.match(received, /echo:hello/);
+  client.destroy();
   assert.equal(dnsCalls, 1, 'Hostname must be resolved exactly once per tunnel');
   assert.deepEqual(connectedAddresses, ['93.184.216.34'], 'Socket must connect to the validated IP, not hostname');
 });
