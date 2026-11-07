@@ -26,7 +26,8 @@ function safeStatus(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       typeof value.secretVersion !== 'string' || !VERSION.test(value.secretVersion) ||
       !Array.isArray(value.tokenIds) ||
-      value.tokenIds.some(id => typeof id !== 'string' || !IDENTIFIER.test(id))) {
+      value.tokenIds.some(id => typeof id !== 'string' || !IDENTIFIER.test(id)) ||
+      new Set(value.tokenIds).size !== value.tokenIds.length) {
     throw new TypeError('Replica status contains invalid or unsafe metadata');
   }
   const ring = value.auditKeyRing;
@@ -34,6 +35,7 @@ function safeStatus(value) {
       typeof ring.activeKeyId !== 'string' || !/^[a-f0-9]{16}$/.test(ring.activeKeyId) ||
       !Array.isArray(ring.keyIds) ||
       ring.keyIds.some(id => typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) ||
+      new Set(ring.keyIds).size !== ring.keyIds.length ||
       !ring.keyIds.includes(ring.activeKeyId)) {
     throw new TypeError('Replica status contains invalid audit key metadata');
   }
@@ -88,8 +90,24 @@ async function readJson(req, maxBytes) {
 
 function validateServerBinding(host) {
   requireText(host, 'A private replica bind host');
-  if (host === '0.0.0.0' || host === '::' || host === '[::]') {
-    throw new TypeError('Replica RPC server must bind to an explicit private interface, not a wildcard');
+  const family = isIP(host);
+  if (!family) throw new TypeError('Replica RPC server must bind to a literal private IP address');
+  if (family === 4) {
+    const octets = host.split('.').map(Number);
+    const [a, b] = octets;
+    const privateAddress = a === 10 || a === 127 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168);
+    if (!privateAddress) {
+      throw new TypeError('Replica RPC server must bind to a loopback or RFC1918 private IPv4 address');
+    }
+  } else {
+    const normalized = host.toLowerCase();
+    const loopback = normalized === '::1';
+    const uniqueLocal = /^f[cd][0-9a-f]{2}:/i.test(normalized);
+    if (!loopback && !uniqueLocal) {
+      throw new TypeError('Replica RPC server must bind to loopback or IPv6 unique-local address');
+    }
   }
   return host;
 }
