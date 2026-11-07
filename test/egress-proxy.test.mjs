@@ -80,7 +80,7 @@ test('Egress proxy rejects the entire DNS answer set if any address is private',
   t.after(() => close(proxy));
 
   const result = await request(port,
-    'CONNECT public.example:443 HTTP/1.1\r\nHost: public.example:443\r\n\r\n');
+    'CONNECT public.example.com:443 HTTP/1.1\r\nHost: public.example.com:443\r\n\r\n');
   assert.match(result, /403 Forbidden/);
   assert.match(result, /private or reserved/);
   assert.equal(connectCalls, 0);
