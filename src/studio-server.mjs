@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { constants as fsConstants, rmSync } from 'node:fs';
+import { constants as fsConstants, rmSync, readdirSync, lstatSync } from 'node:fs';
 import { mkdir, readFile, lstat, open, readdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -142,6 +142,24 @@ async function readJobJson(outputRoot, jobId, filename, maxBytes = 2 * 1024 * 10
   } finally { await handle.close(); }
 }
 
+function directoryBytesSync(root) {
+  const pending = [root];
+  let total = 0;
+  while (pending.length) {
+    const directory = pending.pop();
+    let entries;
+    try { entries = readdirSync(directory); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    for (const name of entries) {
+      const file = path.join(directory, name);
+      const info = lstatSync(file);
+      if (info.isDirectory() && !info.isSymbolicLink()) pending.push(file);
+      else total += info.size;
+    }
+  }
+  return total;
+}
+
 async function directoryBytes(root) {
   const pending = [root];
   let total = 0;
@@ -236,7 +254,26 @@ export function createStudioServer({
   if (cloudMode) {
     store.pruneCloudSubmissions(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
   }
-  const jobs = new Map(store.recover().map(job => [job.id, job]));
+  const recoveredJobs = store.recover();
+  const jobs = new Map(recoveredJobs.map(job => [job.id, job]));
+  if (cloudMode) {
+    for (const job of recoveredJobs) {
+      if (!job.tenantId || !job.projectId || store.hasCloudUsage(job.id)) continue;
+      const artifactBytes = directoryBytesSync(job.outputDir);
+      const workerMs = job.startedAt
+        ? Math.max(0, Date.parse(job.finishedAt || new Date().toISOString()) - Date.parse(job.startedAt))
+        : 0;
+      const period = new Date(job.createdAt).toISOString().slice(0, 7);
+      const costMicros =
+        Math.ceil(workerMs / 1000) * workerCostPerSecondMicros +
+        Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
+      store.finalizeCloudUsage(job, { workerMs, artifactBytes, costMicros, period, outcome: 'interrupted' });
+      store.recordCloudAudit({
+        tenantId: job.tenantId, projectId: job.projectId, action: 'job.interrupted_recovered',
+        resourceId: job.id, outcome: 'failed', details: { workerMs, artifactBytes, costMicros },
+      });
+    }
+  }
   function pruneHistory() {
     const expiredIds = store.expired().map(job => job.id);
     for (const id of expiredIds) store.delete(id);
@@ -667,6 +704,14 @@ export function createStudioServer({
           job.error = 'Cancelled before execution';
           job.finishedAt = new Date().toISOString();
           store.save(job);
+          if (cloudMode && !store.hasCloudUsage(job.id)) {
+            const artifactBytes = await directoryBytes(job.outputDir);
+            const period = new Date(job.createdAt).toISOString().slice(0, 7);
+            const costMicros = Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
+            store.finalizeCloudUsage(job, {
+              workerMs: 0, artifactBytes, costMicros, period, outcome: 'cancelled',
+            });
+          }
           audit(principal, 'job.cancelled', job.id, 'success', { jobType: job.type, phase: 'queued' });
           pruneHistory();
           return json(res, 200, { id: job.id, status: job.status });
