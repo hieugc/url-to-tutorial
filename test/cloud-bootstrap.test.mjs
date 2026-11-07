@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createCloudStudioFromSecretManager } from '../src/cloud-bootstrap.mjs';
 
 const tokenA = 'bootstrap-tenant-a-token-0123456789abcdef';
@@ -170,6 +173,36 @@ test('Token reload refuses to change audit keys outside the staged rotation work
   });
   await assert.rejects(bootstrap.reloadTokens({}), /separate staged key-rotation workflow/);
   assert.equal(bootstrap.status().secretVersion, 'v1');
+});
+
+test('Cloud bootstrap integrates with the real Studio factory and records MFA token reload', async t => {
+  const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'url-tutorial-cloud-bootstrap-'));
+  t.after(() => rm(outputRoot, { recursive: true, force: true }));
+  let current = snapshot('secret-version-1');
+  const cloud = await createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => current },
+    operatorAuthenticator: {
+      authorize: async () => ({ actorId: 'security-operator', mfaVerified: true }),
+    },
+    serverOptions: {
+      outputRoot,
+      cloudAllowedHosts: ['api.example.test'],
+      cloudTrustedProxy: true,
+      cloudWorker: async () => ({ status: 'not-used-by-bootstrap-test' }),
+    },
+  });
+  try {
+    assert.equal(cloud.status().tokenCount, 1);
+    current = snapshot('secret-version-2', tokenB);
+    const status = await cloud.reloadTokens({ session: 'mfa-verified' });
+    assert.equal(status.secretVersion, 'secret-version-2');
+    const audit = cloud.studio.store.cloudAuditEvents('tenant-a');
+    assert.ok(audit.some(event =>
+      event.action === 'auth.tokens_replaced' && event.principalId === 'security-operator'));
+    assert.equal(JSON.stringify(audit).includes(tokenB), false);
+  } finally {
+    cloud.studio.store.close();
+  }
 });
 
 test('Cloud bootstrap fails closed when the secret manager is missing or returns invalid data', async () => {
