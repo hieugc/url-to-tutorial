@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCloudAuth } from '../src/cloud-auth.mjs';
@@ -324,4 +324,71 @@ test('Cloud API rejects non-public targets, interactive preview and mutating ren
   const accepted = await submit('/api/render', { plan: safePlan });
   assert.equal(accepted.status, 202);
   assert.equal(workerCalls, 1, 'Only the read-only render reaches the isolated worker');
+});
+
+
+test('Cloud worker symlinks cannot make the API read host files as reports or artifacts', async t => {
+  const root = await temp();
+  const secret = path.join(root, 'host-secret.json');
+  await writeFile(secret, JSON.stringify({ secret: 'host-only-sentinel' }));
+  let reportStarted;
+  let releaseReport;
+  const reportReady = new Promise(resolve => { reportStarted = resolve; });
+  const waitReport = new Promise(resolve => { releaseReport = resolve; });
+  const studio = createStudioServer(serverOptions(root, {
+    cloudWorker: async job => {
+      const title = job.request.plan.title;
+      if (title === 'report-symlink') {
+        await symlink(secret, path.join(job.outputDir, 'report.json'));
+        reportStarted();
+        await waitReport;
+        return { report: { status: 'completed' } };
+      }
+      if (title === 'video-symlink') {
+        await symlink(secret, path.join(job.outputDir, 'tutorial.mp4'));
+        return { video: { path: '/job/tutorial.mp4' } };
+      }
+      return result;
+    },
+  }));
+  const origin = await listen(studio.server);
+  t.after(async () => {
+    releaseReport();
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const submit = async title => call(origin, '/api/render', {
+    method: 'POST', token: tokenA, projectId: 'project-a',
+    body: {
+      plan: {
+        schemaVersion: 1, title, url: 'https://example.com', language: 'en',
+        steps: [
+          { id: 'heading', title: 'Heading', description: 'Observe',
+            target: { css: 'h1' }, action: 'highlight', holdMs: 500 },
+          { id: 'stop', title: 'Stop', description: 'End', action: 'stop', holdMs: 500 },
+        ],
+      },
+    },
+  });
+
+  const reportJob = await submit('report-symlink');
+  assert.equal(reportJob.status, 202);
+  await reportReady;
+  const running = await call(origin, '/api/jobs/' + reportJob.data.jobId, {
+    token: tokenA, projectId: 'project-a',
+  });
+  assert.equal(running.status, 200);
+  assert.equal(JSON.stringify(running.data).includes('host-only-sentinel'), false);
+  releaseReport();
+  assert.equal((await waitForJob(origin, reportJob.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+
+  const videoJob = await submit('video-symlink');
+  assert.equal(videoJob.status, 202);
+  assert.equal((await waitForJob(origin, videoJob.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+  const video = await call(origin, '/api/jobs/' + videoJob.data.jobId + '/video', {
+    token: tokenA, projectId: 'project-a',
+  });
+  assert.equal(video.status, 404);
+  assert.equal(JSON.stringify(video.data).includes('host-only-sentinel'), false);
 });
