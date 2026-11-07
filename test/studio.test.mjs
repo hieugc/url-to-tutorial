@@ -26,6 +26,7 @@ const report = {
   ],
 };
 let flakyAttempts = 0;
+let renderImplCalls = 0;
 const { server } = createStudioServer({
   outputRoot: root,
   exploreImpl: async (url, { outDir }) => {
@@ -63,6 +64,7 @@ const { server } = createStudioServer({
     ],
   }),
   renderImpl: async (_plan, { outDir, preview }) => {
+    renderImplCalls++;
     const video = { codec: 'h264', width: 1280, height: 720, duration: 2, path: path.join(outDir, 'tutorial.mp4') };
     if (!preview) await writeFile(video.path, Buffer.from('fake MP4 API test fixture'));
     return { status: 'completed', steps: [{ id: 'intro', status: 'completed' }],
@@ -154,6 +156,8 @@ test('Studio queues discovery, retrieves screenshot, assembles and downloads vid
   assert.equal(renderRequest.status, 202);
   const renderJob = await poll((await renderRequest.json()).jobId);
   assert.equal(renderJob.status, 'completed');
+  assert.equal(renderImplCalls, 1, 'the injected render implementation must produce this job result');
+  assert.ok(renderJob.report, 'completed render job omitted its result: ' + JSON.stringify(renderJob));
   assert.match(renderJob.videoUrl, /\/video$/);
   assert.equal(renderJob.report.video.codec, 'h264');
   assert.equal('path' in renderJob.report.video, false);
