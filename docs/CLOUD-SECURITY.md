@@ -100,6 +100,19 @@ cloud.server.listen(4173, '127.0.0.1');
 
 - The coordinator is an orchestration engine plus adapter contracts, not a deployed distributed service: the AWS read/publish adapters are available, but no concrete durable publish-lock implementation, mTLS replica RPC adapter, durable distributed rollout-store implementation or break-glass workflow is bundled. Provider-side audit configuration and independent operational validation remain release gates.
 
+### Mutually authenticated replica RPC adapter
+
+- `src/cloud-replica-mtls.mjs` provides `createMtlsReplicaServer` and `createMtlsReplicaClient` adapters compatible with the `cloud-rollout.mjs` replica directory contract.
+- The server requires a trusted client CA, TLS client certificates, and an explicit SHA-256 client-certificate fingerprint allowlist. A CA-trusted but non-allowlisted certificate is rejected before any replica operation.
+- The client requires HTTPS, validates the server certificate chain and hostname, and can additionally pin the server certificate SHA-256 fingerprint. IP-literal endpoints require an explicit certificate pin.
+- The server binds only to an explicit loopback, RFC1918 IPv4 or IPv6 unique-local address; wildcard and public-interface binds are rejected.
+- Only two RPC routes exist: `GET /internal/replicas/{replicaId}/status` and `POST /internal/replicas/{replicaId}/reload`. The request is bounded to 16 KiB, rejects unknown fields, and binds the replica ID, immutable secret version and rollout ID. The signed per-replica assertion is passed to the local MFA/assertion-verifying `reloadTokens` capability.
+- Status responses are allowlisted to secret version, token IDs and audit key IDs; credentials, signing-key bytes, SQLite state, raw provider errors and arbitrary local Studio capabilities are never serialized.
+- TLS transport is a library adapter, not a deployed service. The host must provision/rotate certificates, securely distribute trust bundles and fingerprints, configure private network routing/firewalls, and monitor certificate expiry. No mTLS CA, certificate issuance service, service discovery or production endpoint is bundled.
+- Regression tests generate an ephemeral test CA and server/client certificates, verify successful pinned reload, reject a CA-trusted but non-allowlisted client, reject mismatched replica constraints, verify server certificate pinning, and reject wildcard listener binding.
+
+The durable rollout-store and break-glass adapters remain separate deployment gates; mTLS transport alone does not make a rollout durable or production-ready.
+
 Trusted host bootstrap (illustrative):
 
 ```js
