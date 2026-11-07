@@ -213,3 +213,87 @@ test('rejects a successful PutSecretValue response if AWSCURRENT did not advance
     expectedCurrentVersion: '41',
   }), /current stage did not advance/);
 });
+
+
+test('refuses to reuse a revision stage already attached to any AWS version', async () => {
+  const { publisher, calls, stages } = fakeAws();
+  stages.set('UTVREV_42', '41');
+  await assert.rejects(publisher.publishCloudSecretSnapshot({
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    expectedCurrentVersion: '41',
+  }), /immutable revision stage already exists/);
+  assert.equal(calls.some(call => call.SecretString), false);
+});
+
+test('fails closed when AWS reports zero or multiple AWSCURRENT stage assignments', async () => {
+  for (const mode of ['zero', 'multiple']) {
+    const { publisher, calls, stages } = fakeAws();
+    if (mode === 'zero') stages.delete('AWSCURRENT');
+    else stages.set('AWSCURRENT', '40');
+    await assert.rejects(publisher.publishCloudSecretSnapshot({
+      snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+      expectedCurrentVersion: '41',
+    }), /exactly one AWSCURRENT/);
+    assert.equal(calls.some(call => call.SecretString), false);
+  }
+});
+
+test('reconciles a retry after PutSecretValue committed but the publish lease was lost', async () => {
+  const lock = fakeLock({ loseAt: 4 });
+  const { publisher, stages, calls } = fakeAws(snapshot('41', tokenA), { publishLock: lock });
+  const input = {
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    expectedCurrentVersion: '41',
+    clientRequestToken: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  };
+  await assert.rejects(publisher.publishCloudSecretSnapshot(input), /lease is no longer valid/);
+  assert.equal(stages.get('AWSCURRENT'), '42');
+  assert.equal(calls.filter(call => call.SecretString).length, 1);
+
+  const retry = await publisher.publishCloudSecretSnapshot(input);
+  assert.equal(retry.version, '42');
+  assert.equal(retry.idempotent, true);
+  assert.equal(calls.filter(call => call.SecretString).length, 1);
+});
+
+test('rejects a same-revision retry if the published credential material differs', async () => {
+  const { publisher, calls } = fakeAws(snapshot('42', tokenA));
+  await assert.rejects(publisher.publishCloudSecretSnapshot({
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    expectedCurrentVersion: '41',
+  }), /already exists with different material/);
+  assert.equal(calls.some(call => call.SecretString), false);
+});
+
+test('serializes concurrent writers and refuses the losing snapshot without overwriting', async () => {
+  let tail = Promise.resolve();
+  const publishLock = {
+    async withLock(_resource, callback) {
+      let release;
+      const previous = tail;
+      tail = new Promise(resolve => { release = resolve; });
+      await previous;
+      try {
+        let held = true;
+        return await callback({ async assertHeld() {
+          if (!held) throw new Error('lease lost');
+        } });
+      } finally {
+        release();
+      }
+    },
+  };
+  const { publisher, calls, stages } = fakeAws(snapshot('41', tokenA), { publishLock });
+  const makeInput = token => ({
+    snapshot: { tokens: snapshot('0', token).tokens, auditKeyRing: snapshot('0', token).auditKeyRing },
+    expectedCurrentVersion: '41',
+  });
+  const results = await Promise.allSettled([
+    publisher.publishCloudSecretSnapshot(makeInput(tokenB)),
+    publisher.publishCloudSecretSnapshot(makeInput('aws-publisher-third-token-material-0123456789abcdef')),
+  ]);
+  assert.equal(results.filter(x => x.status === 'fulfilled').length, 1);
+  assert.equal(results.filter(x => x.status === 'rejected').length, 1);
+  assert.equal(stages.get('AWSCURRENT'), '42');
+  assert.equal(calls.filter(call => call.SecretString).length, 1);
+});
