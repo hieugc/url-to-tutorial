@@ -1,4 +1,5 @@
-FROM mcr.microsoft.com/playwright:v1.64.1-noble
+ARG PLAYWRIGHT_BASE_IMAGE=mcr.microsoft.com/playwright:v1.64.1-noble
+FROM ${PLAYWRIGHT_BASE_IMAGE}
 
 USER root
 WORKDIR /app
