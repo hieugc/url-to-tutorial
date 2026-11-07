@@ -104,7 +104,8 @@ if (args[0] === 'run') {
   assert.ok(connect.args.includes('egress-proxy'));
   assert.ok(run.args.includes('--read-only'));
   assert.ok(run.args.includes('--cap-drop=ALL'));
-  assert.ok(run.args.some(arg => arg.startsWith('type=bind,src=' + await realpath(output) + ',dst=/job,rw')));
+  const outputReal = await realpath(output);
+  assert.ok(run.args.some(arg => arg.startsWith('type=bind,src=' + outputReal + ',dst=/job,rw')));
   assert.deepEqual(JSON.parse(run.input).request, {
     url: 'https://example.com', maxPages: 1, language: 'en',
   });
