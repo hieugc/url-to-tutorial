@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 
@@ -18,6 +19,15 @@ export class StudioJobStore {
       'job_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT NOT NULL, created_at TEXT NOT NULL)');
     this.db.exec('CREATE INDEX IF NOT EXISTS cloud_job_submissions_tenant_time ' +
       'ON cloud_job_submissions(tenant_id, created_at)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS cloud_request_events (' +
+      'event_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, created_at_ms INTEGER NOT NULL)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS cloud_request_events_tenant_time ' +
+      'ON cloud_request_events(tenant_id, created_at_ms)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS cloud_audit_events (' +
+      'event_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT, principal_id TEXT, ' +
+      'action TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS cloud_audit_events_tenant_time ' +
+      'ON cloud_audit_events(tenant_id, created_at)');
     this.put = this.db.prepare('INSERT INTO studio_jobs (id, created_at, updated_at, json) VALUES (?, ?, ?, ?) ' +
       'ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at, json=excluded.json');
     this.recordCloudSubmission = this.db.prepare('INSERT OR IGNORE INTO cloud_job_submissions ' +
@@ -26,6 +36,20 @@ export class StudioJobStore {
       'SELECT COUNT(*) AS count FROM cloud_job_submissions WHERE tenant_id=? AND created_at>=?');
     this.pruneCloudSubmissionsStatement = this.db.prepare(
       'DELETE FROM cloud_job_submissions WHERE created_at<?');
+    this.pruneCloudRequestsStatement = this.db.prepare(
+      'DELETE FROM cloud_request_events WHERE created_at_ms<?');
+    this.countCloudRequestsStatement = this.db.prepare(
+      'SELECT COUNT(*) AS count, MIN(created_at_ms) AS oldest FROM cloud_request_events ' +
+      'WHERE tenant_id=? AND created_at_ms>=?');
+    this.insertCloudRequestStatement = this.db.prepare(
+      'INSERT INTO cloud_request_events (event_id, tenant_id, created_at_ms) VALUES (?, ?, ?)');
+    this.insertCloudAuditStatement = this.db.prepare(
+      'INSERT INTO cloud_audit_events (event_id, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    this.listCloudAuditStatement = this.db.prepare(
+      'SELECT event_id AS eventId, tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, ' +
+      'action, resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
+      'FROM cloud_audit_events WHERE tenant_id=? ORDER BY created_at, rowid');
     this.deleteStatement = this.db.prepare('DELETE FROM studio_jobs WHERE id=?');
   }
 
@@ -37,7 +61,7 @@ export class StudioJobStore {
     this.put.run(snapshot.id, snapshot.createdAt || now, now, JSON.stringify(snapshot));
   }
 
-  saveCloudSubmission(job) {
+  saveCloudSubmission(job, auditEvent = null) {
     if (!job?.tenantId || !job?.projectId || !job?.id || !job?.createdAt) {
       throw new TypeError('Cloud submission requires job, tenant and project identity');
     }
@@ -49,6 +73,7 @@ export class StudioJobStore {
     try {
       this.put.run(snapshot.id, snapshot.createdAt, now, JSON.stringify(snapshot));
       this.recordCloudSubmission.run(snapshot.id, snapshot.tenantId, snapshot.projectId, snapshot.createdAt);
+      if (auditEvent) this.insertCloudAudit(auditEvent);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -63,6 +88,62 @@ export class StudioJobStore {
 
   pruneCloudSubmissions(before) {
     this.pruneCloudSubmissionsStatement.run(before);
+  }
+
+  consumeCloudRequest(tenantId, now, windowMs, limit) {
+    if (typeof tenantId !== 'string' || !tenantId ||
+        !Number.isSafeInteger(now) || !Number.isSafeInteger(windowMs) || windowMs < 1 ||
+        !Number.isSafeInteger(limit) || limit < 1) {
+      throw new TypeError('Invalid durable cloud request quota arguments');
+    }
+    const cutoff = now - windowMs;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.pruneCloudRequestsStatement.run(cutoff);
+      const row = this.countCloudRequestsStatement.get(tenantId, cutoff);
+      const count = Number(row?.count || 0);
+      if (count >= limit) {
+        this.db.exec('COMMIT');
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(1, Math.ceil((Number(row.oldest) + windowMs - now) / 1000)),
+        };
+      }
+      this.insertCloudRequestStatement.run(randomUUID(), tenantId, now);
+      this.db.exec('COMMIT');
+      return { allowed: true, retryAfterSeconds: 0 };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  insertCloudAudit(event) {
+    if (!event || typeof event.tenantId !== 'string' || !event.tenantId ||
+        typeof event.action !== 'string' || !/^[a-z][a-z0-9_.-]{1,63}$/.test(event.action) ||
+        !['success', 'denied', 'failed'].includes(event.outcome || 'success')) {
+      throw new TypeError('Invalid cloud audit event');
+    }
+    const details = event.details === undefined ? null : JSON.stringify(event.details);
+    if (details && Buffer.byteLength(details) > 4096) {
+      throw new TypeError('Cloud audit details exceed 4 KiB');
+    }
+    const createdAt = event.createdAt || new Date().toISOString();
+    this.insertCloudAuditStatement.run(
+      randomUUID(), event.tenantId, event.projectId || null, event.principalId || null,
+      event.action, event.resourceId || null, event.outcome || 'success', createdAt, details,
+    );
+  }
+
+  recordCloudAudit(event) {
+    this.insertCloudAudit(event);
+  }
+
+  cloudAuditEvents(tenantId) {
+    return this.listCloudAuditStatement.all(tenantId).map(event => ({
+      ...event,
+      details: event.details ? JSON.parse(event.details) : null,
+    }));
   }
 
   all() {

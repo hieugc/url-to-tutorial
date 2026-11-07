@@ -213,8 +213,9 @@ test('Cloud API rate-limits per tenant and emits Retry-After', async t => {
     cloudLimits: { maxRequestsPerMinute: 2 },
   }));
   const origin = await listen(studio.server);
+  let activeServer = studio.server;
   t.after(async () => {
-    await new Promise(resolve => studio.server.close(resolve));
+    if (activeServer.listening) await new Promise(resolve => activeServer.close(resolve));
     await rm(root, { recursive: true, force: true });
   });
 
@@ -225,6 +226,20 @@ test('Cloud API rate-limits per tenant and emits Retry-After', async t => {
   assert.ok(Number(limited.headers['retry-after']) >= 1 &&
     Number(limited.headers['retry-after']) <= 60);
   assert.equal((await call(origin, '/api/jobs', { token: tokenB, projectId: 'project-b' })).status, 200);
+  await new Promise(resolve => studio.server.close(resolve));
+
+  const restarted = createStudioServer(serverOptions(root, {
+    cloudLimits: { maxRequestsPerMinute: 2 },
+  }));
+  const restartedOrigin = await listen(restarted.server);
+  activeServer = restarted.server;
+  const stillLimited = await call(restartedOrigin, '/api/jobs', {
+    token: tokenA, projectId: 'project-a',
+  });
+  assert.equal(stillLimited.status, 429, 'Tenant request quota must survive API restart');
+  assert.equal((await call(restartedOrigin, '/api/jobs', {
+    token: tokenB, projectId: 'project-b',
+  })).status, 200, 'Persisted request events remain tenant-isolated');
 });
 
 
@@ -240,6 +255,10 @@ test('Daily tenant quota survives Studio restart in SQLite', async t => {
   });
   assert.equal(firstJob.status, 202);
   assert.equal((await waitForJob(origin, firstJob.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+  const audit = first.store.cloudAuditEvents('tenant-a');
+  assert.deepEqual(audit.map(event => event.action).sort(), ['job.completed', 'job.submitted']);
+  assert.ok(audit.every(event => event.projectId === 'project-a'));
+  assert.ok(audit.every(event => !JSON.stringify(event).includes(tokenA)));
   await new Promise(resolve => first.server.close(resolve));
 
   const second = createStudioServer(serverOptions(root, {

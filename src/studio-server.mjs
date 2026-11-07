@@ -214,6 +214,14 @@ export function createStudioServer({
     return job && inScope(job, principal) ? job : null;
   }
 
+  function audit(principal, action, resourceId = null, outcome = 'success', details = null) {
+    if (!cloudMode || !principal) return;
+    store.recordCloudAudit({
+      tenantId: principal.tenantId, projectId: principal.projectId,
+      principalId: principal.principalId, action, resourceId, outcome, details,
+    });
+  }
+
   function cloudRequestAllowed(req) {
     let host;
     try {
@@ -232,7 +240,8 @@ export function createStudioServer({
     return true;
   }
 
-  function start(type, work, requestSnapshot = null, key = null, principal = null) {
+  function start(type, work, requestSnapshot = null, key = null, principal = null,
+    auditAction = 'job.submitted') {
     if (cloudMode && (!principal?.tenantId || !principal?.projectId)) {
       throw bad('Authenticated tenant/project context required', 401);
     }
@@ -259,7 +268,10 @@ export function createStudioServer({
       store.pruneCloudSubmissions(cutoff);
       const dailyCount = store.countCloudSubmissions(principal.tenantId, cutoff);
       const quota = cloudAuth.checkJobQuota(allJobs, principal, now, dailyCount);
-      if (!quota.allowed) throw bad(quota.reason, 429);
+      if (!quota.allowed) {
+        audit(principal, 'quota.job_denied', null, 'denied', { jobType: type, reason: quota.reason });
+        throw bad(quota.reason, 429);
+      }
     }
     const id = randomUUID();
     // Persist plans for diagnostics, but never persist plaintext fill values.
@@ -273,8 +285,13 @@ export function createStudioServer({
       ...(cloudMode ? { tenantId: principal.tenantId, projectId: principal.projectId } : {}),
       idempotencyKey: key, requestHash, cancelRequested: false,
       abortController: new AbortController() };
-    if (cloudMode) store.saveCloudSubmission(job);
-    else store.save(job);
+    if (cloudMode) {
+      store.saveCloudSubmission(job, {
+        tenantId: principal.tenantId, projectId: principal.projectId,
+        principalId: principal.principalId, action: auditAction,
+        resourceId: id, details: { jobType: type },
+      });
+    } else store.save(job);
     jobs.set(id, job);
     pruneHistory();
     queue = queue.catch(() => {}).then(async () => {
@@ -304,6 +321,11 @@ export function createStudioServer({
       } finally {
         job.finishedAt = new Date().toISOString();
         store.save(job);
+        if (cloudMode) {
+          audit({ tenantId: job.tenantId, projectId: job.projectId, principalId: principal?.principalId },
+            job.status === 'completed' ? 'job.completed' : job.status === 'cancelled' ? 'job.cancelled' : 'job.failed',
+            job.id, job.status === 'failed' ? 'failed' : 'success', { jobType: job.type });
+        }
         pruneHistory();
       }
     });
@@ -325,9 +347,16 @@ export function createStudioServer({
       const authenticated = cloudAuth.authenticate(req);
       if (!authenticated) return json(res, 401, { error: 'Bearer authentication required' });
       principal = cloudAuth.authorizeProject(authenticated, req.headers['x-project-id']);
-      if (!principal) return json(res, 403, { error: 'Project access denied' });
-      const rate = cloudAuth.consumeRequest(principal);
+      if (!principal) {
+        store.recordCloudAudit({
+          tenantId: authenticated.tenantId, principalId: authenticated.principalId,
+          action: 'project.access_denied', outcome: 'denied',
+        });
+        return json(res, 403, { error: 'Project access denied' });
+      }
+      const rate = cloudAuth.consumeRequest(principal, store);
       if (!rate.allowed) {
+        audit(principal, 'quota.request_denied', null, 'denied', { retryAfterSeconds: rate.retryAfterSeconds });
         res.setHeader('Retry-After', String(rate.retryAfterSeconds));
         return json(res, 429, { error: 'Tenant request rate limit exceeded' });
       }
@@ -479,6 +508,7 @@ export function createStudioServer({
           job.error = 'Cancelled before execution';
           job.finishedAt = new Date().toISOString();
           store.save(job);
+          audit(principal, 'job.cancelled', job.id, 'success', { jobType: job.type, phase: 'queued' });
           pruneHistory();
           return json(res, 200, { id: job.id, status: job.status });
         }
@@ -486,6 +516,7 @@ export function createStudioServer({
           job.cancelRequested = true;
           job.abortController?.abort();
           store.save(job);
+          audit(principal, 'job.cancel_requested', job.id, 'success', { jobType: job.type });
           return json(res, 202, { id: job.id, status: 'cancelling' });
         }
         return json(res, 409, { error: 'This job type cannot yet be cooperatively cancelled while running' });
@@ -509,7 +540,7 @@ export function createStudioServer({
           return goalImpl(request.url, {
             outDir: current.outputDir, goal: request.goal, ai: false, language: request.language, signal,
           });
-        }, request, requestKey, principal);
+        }, request, requestKey, principal, 'job.retry_submitted');
         return json(res, job._deduplicated ? 200 : 202, {
           jobId: job.id, status: job.status, retriedFrom: source.id,
           deduplicated: job._deduplicated === true,
