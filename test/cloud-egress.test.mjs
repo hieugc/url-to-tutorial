@@ -18,6 +18,8 @@ test('Cloud preflight rejects untrusted schemes, DNS returns and unsafe hostname
   const privateDNS = async () => [{ address: '169.254.169.254' }];
   for (const url of [
     'http://example.com', 'https://localhost/', 'https://private.local/',
+    'https://metadata.google.internal/', 'https://internal.test/',
+    'https://127.0.0.1/', 'https://[::1]/',
     'https://user:pass@example.com', 'https://example.com:444/',
   ]) {
     await assert.rejects(publicUrlPreflight(url, privateDNS));
