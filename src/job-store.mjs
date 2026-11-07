@@ -379,15 +379,24 @@ export class StudioJobStore {
     const chainRows = this.auditRowsStatement.all();
     const unsigned = chainRows.filter(row =>
       row.sequence === null && row.previousHash === null && row.eventHash === null);
+    const missingKeyIds = chainRows.filter(row => !row.keyId);
     if (rows.length === 0) {
       if (Number(state.lastSequence) !== 0 || state.lastHash !== EMPTY_AUDIT_HASH) {
         throw new Error('Cloud audit integrity verification failed: chain state has no events');
       }
       return;
     }
-    if (unsigned.length === chainRows.length) {
-      if (Number(state.lastSequence) !== 0 || state.lastHash !== EMPTY_AUDIT_HASH) {
-        throw new Error('Cloud audit integrity verification failed: unsigned events conflict with chain state');
+    // Upgrade pre-key-ID HMAC rows once. Never rewrite an already externally
+    // archived prefix: its immutable copy must remain independently verifiable.
+    if (missingKeyIds.length === chainRows.length) {
+      const archive = this.auditArchiveStateStatement.get();
+      if (Number(archive.lastArchivedSequence) !== 0) {
+        throw new Error('Cloud audit key-ID migration requires the external archive checkpoint to be zero');
+      }
+      if (unsigned.length !== chainRows.length &&
+          (Number(state.lastSequence) !== chainRows.length ||
+           !/^[a-f0-9]{64}$/.test(state.lastHash || ''))) {
+        throw new Error('Cloud audit integrity verification failed: legacy checkpoint is invalid');
       }
       this.db.exec('BEGIN IMMEDIATE');
       try {
@@ -395,8 +404,10 @@ export class StudioJobStore {
         let previousHash = EMPTY_AUDIT_HASH;
         for (const row of rows) {
           sequence++;
-          const eventHash = this.auditEventHash(sequence, previousHash, row);
-          this.updateAuditRowStatement.run(sequence, previousHash, eventHash, row.eventId);
+          const migrated = { ...row, keyId: this.activeAuditKeyId };
+          const eventHash = this.auditEventHash(sequence, previousHash, migrated);
+          this.updateAuditRowStatement.run(sequence, previousHash, eventHash,
+            this.activeAuditKeyId, row.eventId);
           previousHash = eventHash;
         }
         this.updateAuditStateStatement.run(sequence, previousHash);
@@ -407,7 +418,7 @@ export class StudioJobStore {
       }
       return;
     }
-    if (unsigned.length > 0 || chainRows.some(row =>
+    if (unsigned.length > 0 || missingKeyIds.length > 0 || chainRows.some(row =>
       !Number.isSafeInteger(row.sequence) || typeof row.previousHash !== 'string' ||
       typeof row.eventHash !== 'string')) {
       throw new Error('Cloud audit integrity verification failed: partial or missing signatures');
@@ -419,13 +430,14 @@ export class StudioJobStore {
   }
 
   verifyCloudAuditChain() {
-    if (!this.auditKey) return { valid: false, reason: 'Audit signing key is not configured' };
+    if (this.auditKeys.size === 0) return { valid: false, reason: 'Audit signing key ring is not configured' };
     let sequence = 0;
     let previousHash = EMPTY_AUDIT_HASH;
     for (const row of this.auditRowsStatement.all()) {
       if (row.sequence !== sequence + 1 || row.previousHash !== previousHash ||
+          !/^[a-f0-9]{16}$/.test(row.keyId || '') || !this.auditKeys.has(row.keyId) ||
           !/^[a-f0-9]{64}$/.test(row.eventHash || '')) {
-        return { valid: false, reason: 'Audit sequence or previous-hash link is invalid', sequence: row.sequence };
+        return { valid: false, reason: 'Audit sequence, key ID or previous-hash link is invalid', sequence: row.sequence };
       }
       const expected = Buffer.from(this.auditEventHash(row.sequence, previousHash, row), 'hex');
       const actual = Buffer.from(row.eventHash, 'hex');
@@ -440,6 +452,42 @@ export class StudioJobStore {
       return { valid: false, reason: 'Audit chain checkpoint does not match stored events' };
     }
     return { valid: true, count: sequence, lastSequence: sequence, lastHash: previousHash };
+  }
+
+  rotateAuditSigningKey({ keyId, key, actorId = 'operator' } = {}) {
+    if (!this.activeAuditKeyId || !this.verifyCloudAuditChain().valid) {
+      throw new Error('Cannot rotate an unverified audit signing key ring');
+    }
+    if (typeof keyId !== 'string' || !/^[a-f0-9]{16}$/.test(keyId) ||
+        (typeof key !== 'string' && !Buffer.isBuffer(key))) {
+      throw new TypeError('New audit key requires a 16-hex keyId and string/Buffer key');
+    }
+    const resolved = Buffer.from(key);
+    if (resolved.length < 32) throw new TypeError('New audit signing key must contain at least 32 bytes');
+    if (this.auditKeys.has(keyId)) throw new Error('Audit key ID already exists; rotation requires a new key ID');
+    if (typeof actorId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.@-]{1,63}$/.test(actorId)) {
+      throw new TypeError('Audit key rotation actorId is invalid');
+    }
+    const previousKeyId = this.activeAuditKeyId;
+    this.auditKeys.set(keyId, resolved);
+    this.activeAuditKeyId = keyId;
+    this.auditKey = resolved;
+    try {
+      this.recordCloudAudit({
+        tenantId: 'platform', principalId: actorId, action: 'audit.signing_key_rotated',
+        details: { previousKeyId, activeKeyId: keyId },
+      });
+    } catch (error) {
+      this.auditKeys.delete(keyId);
+      this.activeAuditKeyId = previousKeyId;
+      this.auditKey = this.auditKeys.get(previousKeyId);
+      throw error;
+    }
+    return { previousKeyId, activeKeyId: keyId };
+  }
+
+  auditKeyRingMetadata() {
+    return { activeKeyId: this.activeAuditKeyId, keyIds: [...this.auditKeys.keys()] };
   }
 
   recordCloudAudits(events) {
