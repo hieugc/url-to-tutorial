@@ -32,9 +32,9 @@ function assertCloudSafePlan(input) {
   return plan;
 }
 
-async function assertPublicTarget(url) {
+async function assertPublicTarget(url, preflight = publicUrlPreflight) {
   HttpUrl.parse(url);
-  return publicUrlPreflight(url);
+  return preflight(url);
 }
 
 export async function runCloudWorkerJob(payload, {
@@ -44,6 +44,7 @@ export async function runCloudWorkerJob(payload, {
   hostingerImpl = createHostingerGuide,
   renderImpl = render,
   narrateImpl = renderNarrated,
+  preflight = publicUrlPreflight,
 } = {}) {
   if (!payload || typeof payload !== 'object' || !JOB_ID.test(payload.jobId || '') ||
       !ID.test(payload.tenantId || '') || !ID.test(payload.projectId || '') ||
@@ -58,7 +59,7 @@ export async function runCloudWorkerJob(payload, {
   if (signal?.aborted) throw abortError();
 
   if (payload.type === 'discover') {
-    const url = await assertPublicTarget(request.url);
+    const url = await assertPublicTarget(request.url, preflight);
     return exploreImpl(url, {
       outDir: OUTPUT_DIR, maxPages: request.maxPages, language: request.language, signal,
     });
@@ -76,7 +77,7 @@ export async function runCloudWorkerJob(payload, {
   }
 
   const plan = assertCloudSafePlan(request.plan);
-  await assertPublicTarget(plan.url);
+  await assertPublicTarget(plan.url, preflight);
   if (request.narrate === true) {
     return narrateImpl(plan, { outDir: OUTPUT_DIR, headed: false, preview: false, signal });
   }
