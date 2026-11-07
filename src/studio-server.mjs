@@ -168,6 +168,7 @@ export function createStudioServer({
   cloudAllowedHosts = [],
   cloudTrustedProxy = false,
   cloudWorker = null,
+  cloudAuditKey = null,
   cloudPreflight = publicUrlPreflight,
 } = {}) {
   const allowedCloudHosts = new Set(cloudAllowedHosts.map(host => String(host).trim().toLowerCase()));
@@ -184,8 +185,11 @@ export function createStudioServer({
   if (cloudMode && typeof cloudWorker !== 'function') {
     throw new TypeError('Cloud mode requires an isolated-worker adapter; local browser execution is disabled');
   }
+  if (cloudMode && (typeof cloudAuditKey !== 'string' || Buffer.byteLength(cloudAuditKey) < 32)) {
+    throw new TypeError('Cloud mode requires a stable 32-byte audit signing key from a secret manager');
+  }
   const cloudAuth = cloudMode ? createCloudAuth({ tokens: cloudTokens, limits: cloudLimits }) : null;
-  const store = new StudioJobStore(outputRoot);
+  const store = new StudioJobStore(outputRoot, { auditKey: cloudMode ? cloudAuditKey : null });
   if (cloudMode) {
     store.pruneCloudSubmissions(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
   }
