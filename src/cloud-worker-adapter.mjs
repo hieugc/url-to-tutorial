@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, realpath, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 const UUID = /^[a-f0-9-]{36}$/i;
@@ -58,6 +58,21 @@ function validateImage(image) {
     throw new TypeError('Cloud worker image must be pinned by an immutable @sha256 digest');
   }
   return image;
+}
+
+export async function directoryBytes(root) {
+  const pending = [root];
+  let total = 0;
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const name of await readdir(directory)) {
+      const file = path.join(directory, name);
+      const info = await lstat(file);
+      if (info.isDirectory() && !info.isSymbolicLink()) pending.push(file);
+      else if (info.isFile() || info.isSymbolicLink()) total += info.size;
+    }
+  }
+  return total;
 }
 
 export function buildDockerWorkerRunArgs({
@@ -125,6 +140,8 @@ export function createDockerWorkerAdapter({
   cpuLimit = '2',
   pidsLimit = 128,
   timeoutMs = 600000,
+  maxOutputBytes = 1024 * 1024 * 1024,
+  outputCheckIntervalMs = 1000,
 } = {}) {
   validateImage(image);
   if (typeof allowedOutputRoot !== 'string' || !path.isAbsolute(allowedOutputRoot)) {
@@ -132,6 +149,11 @@ export function createDockerWorkerAdapter({
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(proxyContainer)) {
     throw new TypeError('Invalid egress proxy container name');
+  }
+  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1024 * 1024 ||
+      !Number.isSafeInteger(outputCheckIntervalMs) || outputCheckIntervalMs < 100 ||
+      outputCheckIntervalMs > 10000) {
+    throw new TypeError('Invalid cloud worker output size monitor limits');
   }
   const rootPath = path.resolve(allowedOutputRoot);
 
@@ -194,6 +216,10 @@ export function createDockerWorkerAdapter({
 
     let networkCreated = false;
     let stopPromise = null;
+    let monitorTimer = null;
+    let monitorStopped = false;
+    let monitorError = null;
+    let monitorPromise = Promise.resolve();
     const onAbort = () => {
       if (!stopPromise) stopPromise = stopContainer(containerName);
     };
@@ -221,9 +247,44 @@ export function createDockerWorkerAdapter({
       job.signal?.addEventListener('abort', onAbort, { once: true });
       if (job.signal?.aborted) throw abortError();
 
-      const result = await runDocker(dockerBin, args, {
-        input: envelope, timeoutMs: timeoutMs + 30000, maxOutputBytes: MAX_RESULT_BYTES,
-      });
+      const monitorOutput = async () => {
+        if (monitorStopped || monitorError) return;
+        try {
+          const bytes = await directoryBytes(outputReal);
+          if (bytes > maxOutputBytes) {
+            monitorError = new Error('Cloud worker output exceeded the configured byte limit');
+            if (!stopPromise) stopPromise = stopContainer(containerName);
+            await stopPromise;
+            return;
+          }
+        } catch (error) {
+          monitorError = new Error('Unable to verify cloud worker output size: ' + error.message);
+          if (!stopPromise) stopPromise = stopContainer(containerName);
+          await stopPromise;
+          return;
+        }
+        if (!monitorStopped && !monitorError) {
+          monitorTimer = setTimeout(() => {
+            monitorPromise = monitorOutput();
+          }, outputCheckIntervalMs);
+          monitorTimer.unref?.();
+        }
+      };
+      monitorTimer = setTimeout(() => {
+        monitorPromise = monitorOutput();
+      }, outputCheckIntervalMs);
+      monitorTimer.unref?.();
+
+      let result;
+      try {
+        result = await runDocker(dockerBin, args, {
+          input: envelope, timeoutMs: timeoutMs + 30000, maxOutputBytes: MAX_RESULT_BYTES,
+        });
+      } catch (error) {
+        if (monitorError) throw monitorError;
+        throw error;
+      }
+      if (monitorError) throw monitorError;
       if (job.signal?.aborted) throw abortError();
       let parsed;
       try { parsed = JSON.parse(result.stdout); }
@@ -236,6 +297,9 @@ export function createDockerWorkerAdapter({
       if (job.signal?.aborted) throw abortError();
       throw error;
     } finally {
+      monitorStopped = true;
+      if (monitorTimer) clearTimeout(monitorTimer);
+      await monitorPromise;
       job.signal?.removeEventListener('abort', onAbort);
       if (job.signal?.aborted) {
         if (!stopPromise) stopPromise = stopContainer(containerName);
