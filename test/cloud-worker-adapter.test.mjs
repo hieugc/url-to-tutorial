@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { buildDockerWorkerRunArgs, createDockerWorkerAdapter } from '../src/cloud-worker-adapter.mjs';
+import { buildDockerWorkerRunArgs, createDockerWorkerAdapter, directoryBytes } from '../src/cloud-worker-adapter.mjs';
 
 const jobId = 'f1f1f1f1-1111-4111-8111-111111111111';
 const image = 'ghcr.io/hieugc/url-to-tutorial-worker@sha256:' + 'a'.repeat(64);
@@ -111,4 +111,19 @@ if (args[0] === 'run') {
   assert.ok(disconnect);
   assert.ok(removeNetwork);
   assert.equal(calls.some(call => call.args.some(arg => arg.includes('docker.sock'))), false);
+});
+
+
+test('Worker output byte accounting does not follow symlinks outside the job directory', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'tutorial-output-limit-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const output = path.join(root, 'job');
+  await import('node:fs/promises').then(fs => fs.mkdir(output));
+  const outside = path.join(root, 'outside-secret.bin');
+  await writeFile(outside, Buffer.alloc(4096));
+  await writeFile(path.join(output, 'render.mp4'), Buffer.alloc(128));
+  await symlink(outside, path.join(output, 'linked-secret.bin'));
+  const bytes = await directoryBytes(output);
+  assert.ok(bytes < 4096, 'symlink target bytes must never be counted or followed');
+  assert.ok(bytes >= 128, 'regular worker output files must be counted');
 });
