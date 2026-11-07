@@ -113,10 +113,11 @@ const ring = await secretManager.readCloudAuditKeyRing();
 const studio = createStudioServer({ cloudMode: true, cloudAuditKeyRing: ring, /* other settings */ });
 const nextKey = await secretManager.readCloudAuditKey('audit-key-next');
 const nextKeyId = createHash('sha256').update(nextKey).digest('hex').slice(0, 16);
-await secretManager.setActiveCloudAuditKeyId(nextKeyId);
+// Repeat this trusted rotation on every replica, then verify each chain.
 studio.auditAdmin.rotateSigningKey({
   keyId: nextKeyId, key: nextKey, actorId: 'platform-operator',
 });
+await secretManager.setActiveCloudAuditKeyId(nextKeyId);
 ```
 
 The sequence above is illustrative: a production operator workflow must coordinate secret-manager state and every API replica. Do not switch the secret manager's active key or remove historical keys until all replicas confirm the new key ring and the audit chain verifies.
