@@ -48,7 +48,6 @@ export class StudioJobStore {
     mkdirSync(root, { recursive: true });
     this.db = new DatabaseSync(path.join(root, 'studio-jobs.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL;');
-    this.auditKey = resolvedAuditKey;
     this.db.exec('CREATE TABLE IF NOT EXISTS studio_jobs (' +
       'id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS cloud_job_submissions (' +
@@ -328,17 +327,22 @@ export class StudioJobStore {
   }
 
   auditEventHash(sequence, previousHash, event) {
+    const keyId = event.keyId || this.activeAuditKeyId;
+    const key = this.auditKeys.get(keyId);
+    if (!key) throw new Error('Cloud audit signing key is unavailable: ' + keyId);
     const payload = JSON.stringify([
-      event.eventId, event.tenantId, event.projectId, event.principalId,
+      event.eventId, keyId, event.tenantId, event.projectId, event.principalId,
       event.action, event.resourceId, event.outcome, event.createdAt, event.details,
     ]);
-    return createHmac('sha256', this.auditKey)
+    return createHmac('sha256', key)
       .update(String(sequence) + '\\n' + previousHash + '\\n' + payload, 'utf8')
       .digest('hex');
   }
 
   insertCloudAudit(event) {
-    if (!this.auditKey) throw new Error('Cloud audit signing key is not configured');
+    if (!this.activeAuditKeyId || !this.auditKeys.has(this.activeAuditKeyId)) {
+      throw new Error('Cloud audit signing key is not configured');
+    }
     if (!event || typeof event.tenantId !== 'string' || !event.tenantId ||
         typeof event.action !== 'string' || !/^[a-z][a-z0-9_.-]{1,63}$/.test(event.action) ||
         !['success', 'denied', 'failed'].includes(event.outcome || 'success')) {
@@ -356,7 +360,7 @@ export class StudioJobStore {
       eventId: randomUUID(), tenantId: event.tenantId,
       projectId: event.projectId || null, principalId: event.principalId || null,
       action: event.action, resourceId: event.resourceId || null,
-      outcome: event.outcome || 'success', createdAt, details,
+      outcome: event.outcome || 'success', createdAt, details, keyId: this.activeAuditKeyId,
     };
     const state = this.auditStateStatement.get();
     const sequence = Number(state.lastSequence) + 1;
@@ -364,7 +368,7 @@ export class StudioJobStore {
     const eventHash = this.auditEventHash(sequence, previousHash, row);
     this.insertCloudAuditStatement.run(
       row.eventId, sequence, previousHash, eventHash, row.tenantId, row.projectId,
-      row.principalId, row.action, row.resourceId, row.outcome, row.createdAt, row.details,
+      row.principalId, row.action, row.resourceId, row.outcome, row.createdAt, row.details, row.keyId,
     );
     this.updateAuditStateStatement.run(sequence, eventHash);
   }
