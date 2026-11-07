@@ -16,17 +16,28 @@ try {
   process.exit(0);
 }
 
-let created = false;
 try {
   run(['build', '-f', 'Dockerfile.egress-proxy', '-t', image, '.'], { stdio: 'inherit', timeout: 180000 });
   run(['network', 'create', '--driver', 'bridge', egressNetwork]);
   run(['run', '--detach', '--init', '--name', proxyContainer, '--network', egressNetwork,
+    '--env', 'EGRESS_PROXY_HOST=0.0.0.0', '--env', 'EGRESS_PROXY_PORT=3128',
     '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
     '--pids-limit=64', '--memory=128m', '--cpus=0.5',
     '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=16m', image]);
   run(['network', 'create', '--internal', '--driver', 'bridge', workerNetwork]);
   run(['network', 'connect', '--alias', 'egress-proxy', workerNetwork, proxyContainer]);
-  created = true;
+  const readyProbe = `
+    const net=require('node:net');
+    let attempts=0;
+    const tryConnect=()=>{
+      const socket=net.connect(3128,'egress-proxy');
+      socket.once('connect',()=>{socket.destroy();process.exit(0)});
+      socket.once('error',()=>{socket.destroy();if(++attempts>=30)process.exit(1);setTimeout(tryConnect,200)});
+    };
+    tryConnect();
+  `;
+  run(['run', '--rm', '--network', workerNetwork, '--entrypoint', 'node', image, '-e', readyProbe],
+    { timeout: 10000 });
 
   const directProbe = `
     const net=require('node:net');
@@ -60,7 +71,6 @@ try {
       const secure=tls.connect({socket,servername:'example.com',rejectUnauthorized:true});
       secure.on('error',()=>{clearTimeout(timer);fail(4)});
       secure.once('secureConnect',()=>{
-        if(remainder.length)secure.unshift(remainder);
         secure.write('GET / HTTP/1.1\\r\\nHost: example.com\\r\\nConnection: close\\r\\n\\r\\n');
       });
       let responseText='';
@@ -95,11 +105,7 @@ try {
   process.stdout.write('PASS: worker network blocks direct internet, allows public HTTPS only through proxy, and rejects localhost CONNECT\n');
 } finally {
   try { run(['rm', '-f', proxyContainer]); } catch {}
-  if (created) {
-    try { run(['network', 'rm', workerNetwork]); } catch {}
-  } else {
-    try { run(['network', 'rm', workerNetwork]); } catch {}
-  }
+  try { run(['network', 'rm', workerNetwork]); } catch {}
   try { run(['network', 'rm', egressNetwork]); } catch {}
   try { run(['image', 'rm', image]); } catch {}
 }
