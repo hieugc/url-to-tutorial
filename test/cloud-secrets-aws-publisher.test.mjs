@@ -56,6 +56,9 @@ function fakeAws(initial = snapshot('41', tokenA), options = {}) {
   class GetSecretValueCommand {
     constructor(input) { this.input = input; }
   }
+  class DescribeSecretCommand {
+    constructor(input) { this.input = input; }
+  }
   class PutSecretValueCommand {
     constructor(input) { this.input = input; }
   }
@@ -72,6 +75,15 @@ function fakeAws(initial = snapshot('41', tokenA), options = {}) {
             .filter(([, value]) => value === revision)
             .map(([stage]) => stage),
         };
+      }
+      if (command instanceof DescribeSecretCommand) {
+        const versionIdsToStages = {};
+        for (const [stage, revision] of stages.entries()) {
+          const versionId = 'aws-version-' + revision;
+          versionIdsToStages[versionId] ??= [];
+          versionIdsToStages[versionId].push(stage);
+        }
+        return { VersionIdsToStages: versionIdsToStages };
       }
       if (command instanceof PutSecretValueCommand) {
         if (options.putError) throw new Error('AWS leaked ' + tokenB);
@@ -98,6 +110,7 @@ function fakeAws(initial = snapshot('41', tokenA), options = {}) {
   const publisher = createAwsSecretsManagerPublisher({
     client,
     GetSecretValueCommand,
+    DescribeSecretCommand,
     PutSecretValueCommand,
     secretId: 'tutorial/cloud/runtime',
     publishLock: options.publishLock ?? fakeLock(),
@@ -170,6 +183,7 @@ test('requires a durable publish lock and verifies the lease before writing', as
   assert.throws(() => createAwsSecretsManagerPublisher({
     client: { send() {} },
     GetSecretValueCommand: class {},
+    DescribeSecretCommand: class {},
     PutSecretValueCommand: class {},
     secretId: 'tutorial/cloud/runtime',
   }), /durable distributed publishLock/);
