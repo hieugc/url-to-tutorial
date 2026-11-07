@@ -152,19 +152,21 @@ export function createEgressProxyServer({
         });
         upstreams.add(upstream);
         upstream.setNoDelay(true);
+        let established = false;
         upstream.setTimeout(connectTimeoutMs, () => upstream.destroy(new Error('Egress connection timed out')));
         upstream.on('error', () => {
-          if (!upstream.connecting && !client.destroyed) {
+          if (!established && !client.destroyed) {
             response(client, 502, 'Bad Gateway', 'Destination connection failed');
           }
         });
         upstream.once('close', () => {
           upstreams.delete(upstream);
-          if (!client.destroyed) client.end();
+          if (established && !client.destroyed) client.end();
         });
         client.once('close', () => upstream.destroy());
 
         upstream.once('connect', () => {
+          established = true;
           if (client.destroyed) {
             upstream.destroy();
             return;
@@ -183,9 +185,11 @@ export function createEgressProxyServer({
     client.on('data', onHeader);
   });
 
-  server.once('close', () => {
+  const closeServer = server.close.bind(server);
+  server.close = callback => {
     for (const socket of clients) socket.destroy();
     for (const socket of upstreams) socket.destroy();
-  });
+    return closeServer(callback);
+  };
   return server;
 }
