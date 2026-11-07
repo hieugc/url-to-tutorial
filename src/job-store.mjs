@@ -173,7 +173,8 @@ export class StudioJobStore {
       'resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
       'FROM cloud_audit_events ORDER BY sequence, rowid');
     this.legacyAuditRowsStatement = this.db.prepare(
-      'SELECT event_id AS eventId, tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, ' +
+      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, ' +
+      'tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, ' +
       'action, resource_id AS resourceId, outcome, created_at AS createdAt, details, key_id AS keyId ' +
       'FROM cloud_audit_events ORDER BY rowid');
     this.updateAuditRowStatement = this.db.prepare(
