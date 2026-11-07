@@ -541,7 +541,7 @@ test('Cloud audit HMAC chain migrates legacy rows, verifies across restart and d
   const root = await temp();
   t.after(() => rm(root, { recursive: true, force: true }));
   const auditKey = 'test-only-cloud-audit-signing-key-0123456789abcdef';
-  const legacy = new StudioJobStore(root, { auditKey: oldKey });
+  const legacy = new StudioJobStore(root);
   legacy.db.exec('DROP TABLE cloud_audit_events');
   legacy.db.exec('CREATE TABLE cloud_audit_events (' +
     'event_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT, principal_id TEXT, ' +
@@ -592,7 +592,7 @@ test('Versioned audit key ring migrates legacy HMAC rows before rotating and pre
   const nextKey = 'next-audit-key-material-for-rotation-0123456789';
   const oldKeyId = createHash('sha256').update(oldKey).digest('hex').slice(0, 16);
   const nextKeyId = createHash('sha256').update(nextKey).digest('hex').slice(0, 16);
-  const legacy = new StudioJobStore(root);
+  const legacy = new StudioJobStore(root, { auditKey: oldKey });
   legacy.db.exec('DROP TABLE cloud_audit_events');
   legacy.db.exec('CREATE TABLE cloud_audit_events (' +
     'event_id TEXT PRIMARY KEY, sequence INTEGER, previous_hash TEXT, event_hash TEXT, ' +
