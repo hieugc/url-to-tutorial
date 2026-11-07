@@ -1,0 +1,19 @@
+FROM mcr.microsoft.com/playwright:v1.64.1-noble
+
+USER root
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg espeak-ng \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY --chown=pwuser:pwuser src ./src
+ENV NODE_ENV=production
+ENV HOME=/tmp
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+USER pwuser
+CMD ["node", "src/cloud-worker.mjs"]
