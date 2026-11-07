@@ -77,8 +77,13 @@ export function createCloudAuth({ tokens, limits = {}, clock = Date.now } = {}) 
     });
   }
 
-  function consumeRequest(principal) {
+  function consumeRequest(principal, store = null) {
     const now = clock();
+    if (store && typeof store.consumeCloudRequest === 'function') {
+      return store.consumeCloudRequest(
+        principal.tenantId, now, WINDOW_MS, configuredLimits.maxRequestsPerMinute,
+      );
+    }
     const recent = (requests.get(principal.tenantId) || [])
       .filter(timestamp => now - timestamp < WINDOW_MS);
     if (recent.length >= configuredLimits.maxRequestsPerMinute) {
