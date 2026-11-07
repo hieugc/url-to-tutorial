@@ -19,11 +19,11 @@ The default Studio remains local-only and the CLI binds to `127.0.0.1`. The opt-
 - Credentials have a stable `tokenId` (credential identity) and `principalId` (logical service identity). Multiple credentials may overlap for one principal during a planned rotation, but all credentials for that principal must retain the same tenant and project ACL.
 - Optional `expiresAt` is an ISO timestamp. Expired credentials fail authentication immediately; expiry is checked for every authenticated request.
 - The trusted embedding process receives a non-HTTP `tokenAdmin` capability from `createStudioServer`. It provides `list()`, `replace(nextTokens, { actorId })`, `revokeToken(tokenId, { actorId })` and `revokePrincipal(principalId, { actorId })`. It never returns raw tokens or token digests.
-- No tenant-facing or network token-administration route exists. Only trusted host code should call this capability after authenticating an operator and retrieving the replacement credential set from a secret manager.
+- No tenant-facing or network token-administration route exists. The provider-neutral cloud bootstrap can call this capability only after an injected MFA-verifying operator authenticator authorizes the reload; the secret-manager adapter itself remains deployment supplied.
 - Staged rotation: add the new credential with a new `tokenId` and the same `principalId`; deploy the new secret to clients; verify use of the new credential; then revoke the old `tokenId`. `replace` can also atomically replace the complete in-memory registry, including an empty set for emergency disablement.
 - Revocation takes effect for subsequent requests in the current process. It does not cancel requests already authenticated or revoke a token in another process unless that process receives the same secret-manager update. Rehydrate the complete registry from the secret manager at startup and broadcast replacements to every API replica.
 - Token expiry, rotation and revocation actions are written to the SQLite audit ledger before the in-memory registry changes. Audit records contain only token IDs, principal IDs, tenant IDs and operator IDs, never credential material.
-- The registry itself is in memory only. A secret manager, operator authentication/workflow, multi-replica distribution, break-glass process and independent operational validation remain deployment requirements.
+- The registry itself is in memory only. A vendor secret-manager client, multi-replica distribution/coordinator, break-glass process, provider-side audit and independent operational validation remain deployment requirements.
 
 Trusted host-code usage (not an HTTP endpoint):
 
@@ -37,6 +37,36 @@ studio.tokenAdmin.revokeToken('service-a-previous', { actorId: 'platform-operato
 
 Each credential entry contains `tokenId`, `principalId`, `token`, `tenantId`, `projectIds`, and optional `expiresAt`. Multiple token IDs may share one principal ID only when their tenant and project ACLs are identical. The caller is responsible for authenticating the operator and distributing the new secret to all API replicas.
 
+
+## Secret-manager bootstrap and operator token reload
+
+- `src/cloud-bootstrap.mjs` exposes `createCloudStudioFromSecretManager({ secretManager, operatorAuthenticator, serverOptions })`. The deployment injects a `secretManager.readCloudSecrets()` adapter that returns a versioned snapshot: `{ version, tokens, auditKeyRing }`.
+- The bootstrap forces `cloudMode: true` and passes the versioned credentials/key ring to `createStudioServer`; callers cannot override these secret fields through `serverOptions`. Token and key material are never written to environment variables, SQLite or a tenant HTTP response.
+- Startup fails closed if the provider is missing, the snapshot/version is invalid, tokens are empty, or the key ring/fingerprints do not validate. The local default CLI is unchanged and remains loopback-only.
+- The trusted returned `reloadTokens(context)` operation requires an injected `operatorAuthenticator.authorize(context, { action })` adapter to return an MFA-verified `actorId`. It fetches the latest snapshot and calls the existing audited `tokenAdmin.replace`; if the audit append fails, the active token registry is not changed.
+- The provider must advance `version` whenever token material changes. A changed token set with an unchanged version is rejected. Reload refuses audit-key-ring changes; key rotation follows the separate staged workflow above.
+- `status()` returns only secret version, token IDs/count and audit key IDs. No HTTP administration endpoint is added.
+- This is a provider-neutral adapter contract, not a vendor SDK integration: no AWS Secrets Manager, Azure Key Vault, GCP Secret Manager or Vault client is bundled. The deployment must implement and test the provider adapter and MFA-backed operator authenticator. Reload applies to this process only; multi-replica distribution, break-glass, provider-side audit, version rollback protection and independent operational validation remain release gates.
+
+Trusted host bootstrap (illustrative):
+
+```js
+import { createCloudStudioFromSecretManager } from './src/cloud-bootstrap.mjs';
+
+const cloud = await createCloudStudioFromSecretManager({
+  secretManager, // readCloudSecrets() -> { version, tokens, auditKeyRing }
+  operatorAuthenticator, // authorize(context, { action }) -> { actorId, mfaVerified: true }
+  serverOptions: {
+    outputRoot,
+    cloudAllowedHosts: ['api.example.test'],
+    cloudTrustedProxy: true,
+    cloudWorker, // disposable isolated-worker adapter
+  },
+});
+
+// Host-only, MFA-protected token refresh; never expose this method as an HTTP route.
+await cloud.reloadTokens(operatorSession);
+```
 
 ## Audit integrity key and verification
 
