@@ -1,48 +1,97 @@
 # UTV-009 Cloud API — security architecture / NOT DEPLOYED
 
-## Current state
+## Current release state
 
-Current Studio is a local operator-controlled service bound to 127.0.0.1. An opt-in, testable tenant-auth control-plane mode now exists in the server factory, but there is **no publicly exposed or CLI-enabled Cloud API**, no production token lifecycle, billing/audit ledger, deployed multi-tenant worker, or network isolation. The utility in src/cloud-egress.mjs is only a **DNS and URL preflight**, not an SSRF protection boundary. No release should claim UTV-009 DONE based on this code.
+The default Studio remains local-only and the CLI binds to `127.0.0.1`. The opt-in cloud server factory now has tenant/project authentication, quotas, a disposable Docker worker adapter and a DNS-pinned HTTPS egress proxy. These are implemented components, **not a deployed public Cloud API**. Do not expose the service until the remaining release gates below are completed and independently reviewed.
 
-## Local egress-proxy integration hook
+## Implemented control-plane protections
 
-`src/browser.mjs` now honors `TUTORIAL_EGRESS_PROXY` when launching Chromium, using Playwright's browser proxy option. This is a connection point for a future worker deployment, **not an enforced network boundary by itself**. If the container has an unrestricted network route, a target page may still attempt non-browser or non-proxy egress.
+- Bearer tokens are configured server-side, must be at least 32 characters, and are stored in memory only as SHA-256 digests. Authentication uses constant-time digest comparison.
+- Each token maps to a server-defined tenant and explicit project allowlist. Tenant identity never comes from request JSON; every non-health API call requires `X-Project-ID`.
+- Job history, details, retry, cancel, assembly and artifact routes are scoped to the authenticated tenant + project. Out-of-scope IDs return 404.
+- Default quotas: 60 requests/minute, 2 concurrent jobs and 50 job submissions per rolling 24 hours per tenant. Daily submission events are transactionally stored in SQLite. Request-rate counters remain in memory and reset on restart.
+- The cloud API factory requires an explicit Host allowlist, a trusted TLS-terminating proxy assertion and an isolated-worker adapter. It rejects non-HTTPS/private/reserved targets using DNS preflight before queue admission.
+- Cloud mode rejects hosted AI, interactive preview and render plans containing `click`, `fill` or `navigate`. Only read-only `highlight`, `branch` and `stop` plans are accepted.
+- The local Studio UI is not served in cloud mode. The existing global queue cap and 512 KiB request-body limit remain active.
 
-A deployment must attach the worker only to a private/internal network and give it a route to the internet solely through a separately managed egress proxy/firewall. The proxy must resolve and enforce destination IP policy at connection time, deny loopback/private/link-local/multicast/metadata destinations and unsafe ports, and be tested against redirect chains, DNS rebinding and iframe/subresource requests. No Cloud API is currently exposed and this hook is not production-ready.
+## Disposable worker and outbound egress boundary
 
-## Implemented control-plane slice (not deployment-ready)
+### Per-job network topology
 
-The local Studio factory now has an opt-in `cloudMode` for exercising the authenticated control-plane contract. It is not enabled by the CLI and does not change the default loopback-only Studio.
+`src/cloud-worker-adapter.mjs` launches one Docker container and one Docker network per job:
 
-- Requires an explicit allowlist of hostnames, a trusted TLS-terminating reverse proxy that strips/replaces `X-Forwarded-Proto`, and an injected isolated-worker adapter. Every request must carry `X-Forwarded-Proto: https`. The factory refuses cloud mode if the trusted-proxy or worker adapter is absent; local browser execution is not used by cloud-mode jobs.
-- Requires configured bearer tokens. Each token must contain at least 32 characters and maps to a server-defined tenant plus an explicit list of project IDs.
-- Token digests (SHA-256) are held in memory; request tokens are compared in constant time. Raw bearer tokens are not returned by any API.
-- Every non-health API request requires `Authorization: Bearer …` and `X-Project-ID`. Tenant identity is derived only from the verified token; body-supplied tenant/project IDs are ignored.
-- Jobs persist their tenant/project scope. History, job details, retry, cancellation, assembly, screenshots, subtitles and video downloads are all scoped to the authenticated project; out-of-scope job IDs return 404.
-- Default per-tenant limits: 60 API requests/minute, 2 concurrent queued/running jobs, and 50 job submissions in a rolling 24-hour window. Limits are configurable in the server factory. Daily submission events are recorded transactionally in SQLite and survive Studio restarts; the request-rate window remains in memory. The existing global queue cap and 512 KiB body cap remain in force.
-- Hosted AI generation is rejected in cloud mode until billing/cost controls exist. The local Studio UI is not served in cloud mode.
-- Regression tests cover missing/invalid credentials, Host/Origin allowlists, project/tenant isolation, spoofed body IDs, tenant-wide concurrency/daily quotas and independent rate limits.
+1. Create a Docker bridge network with `--internal`. It has no direct external route.
+2. Attach only the dedicated `url-tutorial-egress-proxy` container to that network, with DNS alias `egress-proxy`.
+3. Run a one-shot worker attached only to that per-job network.
+4. Stop/remove the worker, disconnect the proxy and remove the per-job network.
 
-This slice is **control-plane authorization and admission control only**. The worker adapter is an injection point, not an implementation of the isolated worker; tests use a harmless in-process fixture and no production adapter is supplied. Request-rate counters are in memory and reset on restart; rolling daily job submissions are durable in SQLite. It does not provide token rotation/revocation APIs, durable billing/audit ledgers, TLS termination, a public deployment, a worker sandbox, or network egress enforcement. The CLI remains loopback-only. Do not expose or deploy this mode until the trusted proxy is deployed, the worker adapter forwards to a single-use isolated worker whose network namespace is restricted to a verified egress firewall/proxy, and the remaining release gates below are met.
+Different jobs do not share a worker network. The worker has no published ports, host network, Docker socket, host source mount or credentials from the API process. Its only writable host mount is that job's output directory.
 
-## Target architecture
+### Egress proxy behavior
 
-Browser-facing API (authenticated tenant/project) → throttled job queue → single-use browser worker in isolated container/microVM → restricted outbound egress proxy → artifact store with tenant ACL and time-limited signed URLs → cleanup worker.
+`src/egress-proxy.mjs` is a strict HTTP CONNECT proxy:
 
-Security baseline before any public launch:
+- Accepts HTTPS CONNECT only, on TCP port 443. Plain HTTP proxy requests, IP-literal destinations, local/reserved suffixes, malformed/duplicate headers and mismatched Host headers are rejected.
+- Resolves each requested hostname once, checks every returned A/AAAA address, and rejects the whole answer set if any address is private, reserved, link-local, multicast, metadata or otherwise non-global.
+- Connects directly to the exact validated IP from that DNS response; it does not resolve the hostname again. This closes the proxy-side DNS-rebinding gap between validation and TCP connection.
+- Chromium uses the proxy, removes its implicit loopback bypass list and disables QUIC. Redirects, frames and subresources therefore need new proxy tunnels; each hostname is revalidated at connection time.
+- The proxy image is non-root, read-only, capability-free, resource-limited and is not published to the host. It joins the internet-facing bridge; worker networks are attached dynamically and individually.
 
-- Authenticate all API calls with a rotating token; support tenants with project-level authorization. Never accept tenantId from the browser without verifying the current principal.
-- Enforce per-tenant quota, concurrent job limit, runtime ceiling, max bytes and cost safeguards before queue admission.
-- Browser worker must have a non-root identity, no host mounts, no Docker socket, ephemeral home, no credential share, no privileged syscalls and a kill-switch.
-- Block RFC1918, loopback, link-local, multicast, metadata services, internal DNS and non-HTTPS in the **actual network namespace**. DNS and proxy resolution must both be constrained at connection time. Reject redirect chains and subrequests that reach private networks. Node-side DNS preflight is not sufficient against DNS rebinding.
-- Use per-job credentials injected from a scoped secret store. Never include API keys, cookies, session identifiers or payment fields in artifacts or logs.
-- Require explicit opt-in for authenticated sessions; stop at CAPTCHA/MFA without bypassing controls.
-- Store private artifacts encrypted and tenant-scoped, with absolute retention and deletion procedures.
-- Implement CSRF protections for cookie auth, Origin/Host validation, rate limits, idempotency keys for submitted jobs and audit logs for every state change.
-- Red-team SSRF, redirect rebinding, tenant enumeration, leaked screenshot, parallel tasks, size bombs and cancellation/replay edge cases before promotion to production.
+The proxy does not decrypt TLS or inspect URL paths. It allows any globally routable hostname on port 443; it is not a domain allowlist, content filter or abuse-prevention system. Its network boundary depends on workers being attached only to Docker `--internal` networks and on the Docker host/daemon being trusted.
 
-## Evidence and acceptance
+### Worker container hardening
 
-The local helper rejects common reserved addresses, metadata IPv4, loopback IPv6, unsafe schemes and password-embedded URLs in unit tests. This is not a browser-network sandbox.
+`Dockerfile.worker` and the adapter provide:
 
-Release gate remains OPEN until production egress can be demonstrated at the OS/network layer, auth/ACL and quotas are implemented, and independent security tests pass.
+- Playwright/Chromium, FFmpeg and eSpeak NG in a versioned worker image. The runtime image must be referenced by immutable `@sha256` digest.
+- Non-root UID/GID matching the API host process; read-only root filesystem; all Linux capabilities dropped; `no-new-privileges`; default Docker seccomp; no devices or privileged mode.
+- CPU, memory, shared-memory, process-count and wall-clock limits; a bounded `/tmp` tmpfs; one per-job output bind mount.
+- A 1 GiB default output-directory ceiling, monitored during execution. This is a watchdog, not a filesystem quota; a fast writer can temporarily exceed the threshold between scans.
+- API artifact/report reads use `O_NOFOLLOW`, verify regular files and enforce per-artifact size ceilings, preventing a worker-created symlink from making the host API read arbitrary host files.
+
+### Build and run the proxy service
+
+Build and push the egress proxy image from a verified immutable Node base image. Supply the resulting image digest to Compose:
+
+```bash
+docker build \
+  --build-arg NODE_BASE_IMAGE='node:22-alpine@sha256:<verified-base-digest>' \
+  -f Dockerfile.egress-proxy -t registry.example/url-tutorial-egress:release .
+docker push registry.example/url-tutorial-egress:release
+docker image inspect --format='{{index .RepoDigests 0}}' registry.example/url-tutorial-egress:release
+
+TUTORIAL_EGRESS_PROXY_IMAGE='registry.example/url-tutorial-egress@sha256:<built-image-digest>' \
+  docker compose -f compose.cloud-egress.yml up -d
+```
+
+Build the worker image using a verified immutable Playwright base image, push it, and configure `TUTORIAL_WORKER_IMAGE` with its final `@sha256` digest. The adapter refuses mutable tags.
+
+```bash
+docker build \
+  --build-arg PLAYWRIGHT_BASE_IMAGE='mcr.microsoft.com/playwright:v1.64.1-noble@sha256:<verified-base-digest>' \
+  -f Dockerfile.worker -t registry.example/url-tutorial-worker:release .
+docker push registry.example/url-tutorial-worker:release
+docker image inspect --format='{{index .RepoDigests 0}}' registry.example/url-tutorial-worker:release
+```
+
+The trusted API process must run as a non-root host user with access to the Docker daemon and must inject `createDockerWorkerAdapter({ image: process.env.TUTORIAL_WORKER_IMAGE, allowedOutputRoot })` into `createStudioServer`. Docker-daemon access is effectively host-root authority: do not expose its socket to the browser, tenant or worker. If the API itself runs in a container, use a separately hardened Docker API socket proxy with only the minimum required operations. The API must sit behind a real TLS-terminating reverse proxy that strips client-supplied forwarding headers and sets `X-Forwarded-Proto: https`; `cloudTrustedProxy: true` is an operator assertion, not automatic proxy verification.
+
+No public cloud startup command or deployment is included in this PR. The default CLI is unchanged and remains loopback-only.
+
+## Regression evidence
+
+- Unit tests cover IPv4/IPv6 special-purpose ranges, malformed CONNECT requests, port/host policy, mixed public/private DNS answers, DNS pinning, tunnel relay, worker envelope validation, read-only action policy, adapter lifecycle, non-root/resource restrictions and symlink-safe artifact access.
+- `npm run test:cloud:docker` builds the proxy image and checks on a real Docker bridge that a worker network cannot connect directly to a public IP, can reach public HTTPS through the proxy, and cannot CONNECT to localhost.
+- Linux CI runs the Docker network integration test; the regular Linux and macOS suites continue to run the Node/Chromium regression suite.
+
+## Remaining release gates — keep UTV-009 OPEN
+
+- Deploy and independently verify the TLS reverse proxy, Host allowlist and trusted forwarding-header behavior.
+- Add token rotation/revocation, tenant/project administration and a secret-manager integration.
+- Persist request rate-limit state across restarts and add a durable audit log for every state change.
+- Add billing/cost accounting, per-tenant storage budgets, artifact encryption and a tested retention/deletion process.
+- Add an OS-level host firewall policy for the proxy, independent review of Docker bridge rules, and red-team tests for DNS rebinding, redirects, nested subresources, metadata endpoints, tenant enumeration, parallel abuse and cancellation races.
+- Add a cleanup/reconciliation service for orphaned per-job networks after a hard API-host or Docker-daemon failure. Worker process timeout bounds execution, but does not itself remove a network left behind by a host crash.
+- Validate the complete deployment on the intended host, including Docker daemon access controls, disk pressure, proxy health, restart recovery and independent security acceptance.
+
+**Do not enable or advertise a public Cloud API yet.** The code now provides a concrete disposable-worker and egress-proxy implementation, but it is not a substitute for deployment hardening, operations, billing, auditability or independent security review.
