@@ -109,9 +109,10 @@ function publicReport(report) {
 }
 
 /**
- * Studio is deliberately local-only and single-worker. URLs are trusted inputs
- * controlled by the operator; do not expose this process to an untrusted network.
- * Production egress isolation and multi-tenant login are separate tasks.
+ * Default Studio mode is local-only and single-worker; URLs are operator-controlled.
+ * The opt-in cloud control plane requires bearer/project auth, a trusted TLS proxy,
+ * and an injected isolated-worker adapter. It is not a production deployment recipe:
+ * actual worker network isolation and egress enforcement remain external release gates.
  */
 export function createStudioServer({
   outputRoot = path.resolve('output/studio'),
