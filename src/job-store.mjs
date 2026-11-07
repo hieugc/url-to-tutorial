@@ -44,6 +44,7 @@ export class StudioJobStore {
       this.auditKeys.set(this.activeAuditKeyId, key);
     }
     this.auditKey = this.activeAuditKeyId ? this.auditKeys.get(this.activeAuditKeyId) : null;
+    this.legacyAuditKey = auditKey === null ? null : Buffer.from(auditKey);
     const root = path.resolve(outputRoot);
     mkdirSync(root, { recursive: true });
     this.db = new DatabaseSync(path.join(root, 'studio-jobs.sqlite'));
@@ -326,6 +327,17 @@ export class StudioJobStore {
     }
   }
 
+  legacyAuditEventHash(sequence, previousHash, event) {
+    if (!this.legacyAuditKey) throw new Error('Legacy audit key is required to verify pre-key-ID events');
+    const payload = JSON.stringify([
+      event.eventId, event.tenantId, event.projectId, event.principalId,
+      event.action, event.resourceId, event.outcome, event.createdAt, event.details,
+    ]);
+    return createHmac('sha256', this.legacyAuditKey)
+      .update(String(sequence) + '\\n' + previousHash + '\\n' + payload, 'utf8')
+      .digest('hex');
+  }
+
   auditEventHash(sequence, previousHash, event) {
     const keyId = event.keyId || this.activeAuditKeyId;
     const key = this.auditKeys.get(keyId);
@@ -393,10 +405,26 @@ export class StudioJobStore {
       if (Number(archive.lastArchivedSequence) !== 0) {
         throw new Error('Cloud audit key-ID migration requires the external archive checkpoint to be zero');
       }
-      if (unsigned.length !== chainRows.length &&
-          (Number(state.lastSequence) !== chainRows.length ||
-           !/^[a-f0-9]{64}$/.test(state.lastHash || ''))) {
-        throw new Error('Cloud audit integrity verification failed: legacy checkpoint is invalid');
+      if (unsigned.length === chainRows.length) {
+        if (Number(state.lastSequence) !== 0 || state.lastHash !== EMPTY_AUDIT_HASH) {
+          throw new Error('Cloud audit integrity verification failed: unsigned events conflict with chain state');
+        }
+      } else {
+        let legacySequence = 0;
+        let legacyPreviousHash = EMPTY_AUDIT_HASH;
+        for (const row of rows) {
+          legacySequence++;
+          const expected = Buffer.from(this.legacyAuditEventHash(
+            legacySequence, legacyPreviousHash, row), 'hex');
+          const actual = Buffer.from(row.eventHash || '', 'hex');
+          if (actual.length !== 32 || !timingSafeEqual(expected, actual)) {
+            throw new Error('Cloud audit integrity verification failed: legacy event signature mismatch');
+          }
+          legacyPreviousHash = row.eventHash;
+        }
+        if (Number(state.lastSequence) !== legacySequence || state.lastHash !== legacyPreviousHash) {
+          throw new Error('Cloud audit integrity verification failed: legacy checkpoint mismatch');
+        }
       }
       this.db.exec('BEGIN IMMEDIATE');
       try {
