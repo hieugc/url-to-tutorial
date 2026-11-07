@@ -743,6 +743,8 @@ test('Cloud audit archive refuses missing or mismatched external acknowledgement
   });
   assert.equal(request.status, 202);
   assert.equal((await waitForJob(origin, request.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+  assert.ok(studio.store.cloudAuditEvents('tenant-a').length > 0, 'Job lifecycle must create signed audit events');
+  assert.ok(studio.store.cloudAuditArchiveBatch(500).events.length > 0, 'Archive batch must include unarchived events');
   await assert.rejects(studio.auditAdmin.archiveBatch(), /did not acknowledge the exact batch checkpoint/);
   assert.equal(studio.store.cloudAuditArchiveBatch(500).previousSequence, 0);
 });
