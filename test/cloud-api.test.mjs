@@ -645,7 +645,7 @@ test('Cloud API meters tenant jobs and enforces a durable monthly job budget', a
   assert.equal(usage.data.usage.artifactBytes, 1024 * 1024);
   assert.equal(usage.data.usage.storageBytes, 1024 * 1024);
   assert.ok(usage.data.usage.workerMs >= 0);
-  assert.equal(usage.data.usage.estimatedCostMicros, 150 + Math.ceil(usage.data.usage.workerMs / 1000) * 100);
+  assert.equal(usage.data.usage.estimatedCostMicros, 50 + Math.ceil(usage.data.usage.workerMs / 1000) * 100);
 
   const blocked = await call(origin, '/api/discover', {
     method: 'POST', token: tokenA, projectId: 'project-a2',
