@@ -691,3 +691,54 @@ test('Cloud API reserves tenant storage before admission and enforces output byt
   assert.equal(usage.data.usage.storageBytes, 1024 * 1024);
   assert.equal(usage.data.usage.reservedStorageBytes, 0);
 });
+
+
+test('Cloud audit archive requires exact external acknowledgement and resumes from durable checkpoint', async t => {
+  const root = await temp();
+  const external = [];
+  const archiveSink = async batch => {
+    assert.equal(batch.previousSequence, external.length);
+    for (const event of batch.events) external.push(event);
+    const last = batch.events.at(-1);
+    return { throughSequence: last.sequence, throughHash: last.eventHash };
+  };
+  const studio = createStudioServer(serverOptions(root, { cloudAuditArchive: archiveSink }));
+  const origin = await listen(studio.server);
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const submitted = await call(origin, '/api/discover', {
+    method: 'POST', token: tokenA, projectId: 'project-a',
+    body: { url: 'https://example.com', language: 'en', maxPages: 1 },
+  });
+  assert.equal(submitted.status, 202);
+  assert.equal((await waitForJob(origin, submitted.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+
+  const first = await studio.auditAdmin.archiveBatch({ limit: 1 });
+  assert.equal(first.archived, 1);
+  assert.equal(first.lastArchivedSequence, 1);
+  const second = await studio.auditAdmin.archiveBatch({ limit: 500 });
+  assert.ok(second.archived >= 1);
+  assert.equal(second.lastArchivedSequence, external.at(-1).sequence);
+  assert.equal(second.lastArchivedHash, external.at(-1).eventHash);
+  assert.equal(studio.store.cloudAuditArchiveBatch(500).events.length, 0);
+  assert.equal(studio.store.verifyCloudAuditChain().valid, true);
+});
+
+test('Cloud audit archive refuses missing or mismatched external acknowledgement', async t => {
+  const root = await temp();
+  const studio = createStudioServer(serverOptions(root, {
+    cloudAuditArchive: async () => ({ throughSequence: 999, throughHash: 'f'.repeat(64) }),
+  }));
+  const origin = await listen(studio.server);
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+  const request = await call(origin, '/api/jobs', { token: tokenA, projectId: 'project-a' });
+  assert.equal(request.status, 200);
+  await assert.rejects(studio.auditAdmin.archiveBatch(), /did not acknowledge the exact batch checkpoint/);
+  assert.equal(studio.store.cloudAuditArchiveBatch(500).previousSequence, 0);
+});
