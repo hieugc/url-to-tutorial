@@ -197,7 +197,7 @@ export class StudioJobStore {
     try {
       this.deleteCloudStorageReservationStatement.run(jobId);
       this.deleteCloudStorageUsageStatement.run(jobId);
-      this.db.prepare('DELETE FROM cloud_usage_events WHERE job_id=?').run(jobId);
+      // Monthly usage events are financial/accounting records and outlive job artifacts.
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -217,6 +217,14 @@ export class StudioJobStore {
     try {
       this.put.run(snapshot.id, snapshot.createdAt, now, JSON.stringify(snapshot));
       this.recordCloudSubmission.run(snapshot.id, snapshot.tenantId, snapshot.projectId, snapshot.createdAt);
+      if (storage?.maxJobsPerMonth && storage?.period) {
+        const usage = this.monthlyUsageStatement.get(snapshot.tenantId, storage.period);
+        if (Number(usage.jobs || 0) >= storage.maxJobsPerMonth) {
+          const error = new Error('Tenant monthly job budget exceeded');
+          error.code = 'CLOUD_MONTHLY_JOB_BUDGET';
+          throw error;
+        }
+      }
       if (storage) this.reserveCloudStorage(snapshot.id, snapshot.tenantId,
         storage.reservationBytes, storage.budgetBytes, snapshot.createdAt);
       if (auditEvent) this.insertCloudAudit(auditEvent);
