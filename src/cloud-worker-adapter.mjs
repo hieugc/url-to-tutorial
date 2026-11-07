@@ -144,6 +144,10 @@ export function createDockerWorkerAdapter({
   outputCheckIntervalMs = 1000,
 } = {}) {
   validateImage(image);
+  if (typeof process.getuid !== 'function' || typeof process.getgid !== 'function' ||
+      process.getuid() === 0) {
+    throw new Error('Docker worker orchestrator must run as a non-root POSIX host user');
+  }
   if (typeof allowedOutputRoot !== 'string' || !path.isAbsolute(allowedOutputRoot)) {
     throw new TypeError('allowedOutputRoot must be an absolute path matching Studio outputRoot');
   }
