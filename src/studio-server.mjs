@@ -12,6 +12,7 @@ import { HttpUrl, Plan, validatePlanForExecution } from './plan.mjs';
 import { render } from './render.mjs';
 import { renderNarrated } from './narration.mjs';
 import { StudioJobStore } from './job-store.mjs';
+import { createCloudAuth } from './cloud-auth.mjs';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'studio');
 const assets = new Map([
@@ -108,9 +109,10 @@ function publicReport(report) {
 }
 
 /**
- * Studio is deliberately local-only and single-worker. URLs are trusted inputs
- * controlled by the operator; do not expose this process to an untrusted network.
- * Production egress isolation and multi-tenant login are separate tasks.
+ * Default Studio mode is local-only and single-worker; URLs are operator-controlled.
+ * The opt-in cloud control plane requires bearer/project auth, a trusted TLS proxy,
+ * and an injected isolated-worker adapter. It is not a production deployment recipe:
+ * actual worker network isolation and egress enforcement remain external release gates.
  */
 export function createStudioServer({
   outputRoot = path.resolve('output/studio'),
@@ -119,8 +121,29 @@ export function createStudioServer({
   hostingerImpl = createHostingerGuide,
   assembleImpl = assemblePages,
   renderImpl = render,
+  cloudMode = false,
+  cloudTokens = [],
+  cloudLimits = {},
+  cloudAllowedHosts = [],
+  cloudTrustedProxy = false,
+  cloudWorker = null,
 } = {}) {
+  const allowedCloudHosts = new Set(cloudAllowedHosts.map(host => String(host).trim().toLowerCase()));
+  if (cloudMode && (!allowedCloudHosts.size ||
+      [...allowedCloudHosts].some(host => !/^(?=.{1,253}$)[a-z0-9.-]+$/.test(host)))) {
+    throw new TypeError('Cloud mode requires an explicit list of allowed hostnames');
+  }
+  if (cloudMode && cloudTrustedProxy !== true) {
+    throw new TypeError('Cloud mode requires an explicitly trusted TLS-terminating reverse proxy');
+  }
+  if (cloudMode && typeof cloudWorker !== 'function') {
+    throw new TypeError('Cloud mode requires an isolated-worker adapter; local browser execution is disabled');
+  }
+  const cloudAuth = cloudMode ? createCloudAuth({ tokens: cloudTokens, limits: cloudLimits }) : null;
   const store = new StudioJobStore(outputRoot);
+  if (cloudMode) {
+    store.pruneCloudSubmissions(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+  }
   const jobs = new Map(store.recover().map(job => [job.id, job]));
   function pruneHistory() {
     const expiredIds = store.expired().map(job => job.id);
@@ -136,12 +159,44 @@ export function createStudioServer({
   pruneHistory();
   let queue = Promise.resolve();
 
-  function start(type, work, requestSnapshot = null, key = null) {
+  function inScope(job, principal) {
+    return !cloudMode || Boolean(principal && job.tenantId === principal.tenantId &&
+      job.projectId === principal.projectId);
+  }
+
+  function findJob(id, principal) {
+    const job = jobs.get(id);
+    return job && inScope(job, principal) ? job : null;
+  }
+
+  function cloudRequestAllowed(req) {
+    let host;
+    try {
+      const parsed = new URL('http://' + String(req.headers.host || ''));
+      if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return false;
+      host = parsed.hostname.toLowerCase();
+    } catch { return false; }
+    if (!allowedCloudHosts.has(host) || req.headers['x-forwarded-proto'] !== 'https') return false;
+    if (req.headers.origin) {
+      try {
+        const origin = new URL(req.headers.origin);
+        if (origin.protocol !== 'https:' || origin.hostname.toLowerCase() !== host ||
+            origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) return false;
+      } catch { return false; }
+    }
+    return true;
+  }
+
+  function start(type, work, requestSnapshot = null, key = null, principal = null) {
+    if (cloudMode && (!principal?.tenantId || !principal?.projectId)) {
+      throw bad('Authenticated tenant/project context required', 401);
+    }
+    const scope = cloudMode ? principal.tenantId + '\n' + principal.projectId + '\n' : '';
     const requestHash = createHash('sha256')
-      .update(type + '\n' + stableJson(requestSnapshot))
+      .update(type + '\n' + scope + stableJson(requestSnapshot))
       .digest('hex');
     if (key) {
-      const existing = [...jobs.values()].find(job => job.idempotencyKey === key);
+      const existing = [...jobs.values()].find(job => job.idempotencyKey === key && inScope(job, principal));
       if (existing) {
         if (existing.requestHash !== requestHash) {
           throw bad('Idempotency-Key was already used with a different request', 409);
@@ -150,8 +205,17 @@ export function createStudioServer({
         return existing;
       }
     }
-    const pending = [...jobs.values()].filter(job => ['queued', 'running'].includes(job.status)).length;
+    const allJobs = [...jobs.values()];
+    const pending = allJobs.filter(job => ['queued', 'running'].includes(job.status)).length;
     if (pending >= MAX_PENDING) throw bad('Job queue is full (4 pending jobs)', 429);
+    if (cloudMode) {
+      const now = Date.now();
+      const cutoff = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+      store.pruneCloudSubmissions(cutoff);
+      const dailyCount = store.countCloudSubmissions(principal.tenantId, cutoff);
+      const quota = cloudAuth.checkJobQuota(allJobs, principal, now, dailyCount);
+      if (!quota.allowed) throw bad(quota.reason, 429);
+    }
     const id = randomUUID();
     // Persist plans for diagnostics, but never persist plaintext fill values.
     const request = requestSnapshot ? structuredClone(requestSnapshot) : null;
@@ -161,9 +225,11 @@ export function createStudioServer({
     const job = { id, type, status: 'queued', createdAt: new Date().toISOString(),
       outputDir: path.join(path.resolve(outputRoot), id), startedAt: null,
       finishedAt: null, result: null, error: null, request,
+      ...(cloudMode ? { tenantId: principal.tenantId, projectId: principal.projectId } : {}),
       idempotencyKey: key, requestHash, cancelRequested: false,
       abortController: new AbortController() };
-    store.save(job);
+    if (cloudMode) store.saveCloudSubmission(job);
+    else store.save(job);
     jobs.set(id, job);
     pruneHistory();
     queue = queue.catch(() => {}).then(async () => {
@@ -173,7 +239,13 @@ export function createStudioServer({
       store.save(job);
       try {
         await mkdir(job.outputDir, { recursive: true });
-        job.result = await work(job, job.abortController.signal);
+        job.result = cloudMode
+          ? await cloudWorker({
+            jobId: job.id, tenantId: job.tenantId, projectId: job.projectId,
+            type: job.type, request: requestSnapshot ? structuredClone(requestSnapshot) : null,
+            outputDir: job.outputDir, signal: job.abortController.signal,
+          })
+          : await work(job, job.abortController.signal);
         if (job.abortController.signal.aborted) {
           job.status = 'cancelled';
           job.error = 'Cancelled by operator';
@@ -199,21 +271,37 @@ export function createStudioServer({
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     res.setHeader('Content-Security-Policy',
       "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
-    if (!localRequest(req)) return json(res, 403, { error: 'Local loopback requests only' });
     const pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname;
+    if (cloudMode ? !cloudRequestAllowed(req) : !localRequest(req)) {
+      return json(res, 403, { error: cloudMode ? 'Host or Origin is not allowed' : 'Local loopback requests only' });
+    }
+    let principal = null;
+    if (cloudMode && pathname !== '/api/health') {
+      const authenticated = cloudAuth.authenticate(req);
+      if (!authenticated) return json(res, 401, { error: 'Bearer authentication required' });
+      principal = cloudAuth.authorizeProject(authenticated, req.headers['x-project-id']);
+      if (!principal) return json(res, 403, { error: 'Project access denied' });
+      const rate = cloudAuth.consumeRequest(principal);
+      if (!rate.allowed) {
+        res.setHeader('Retry-After', String(rate.retryAfterSeconds));
+        return json(res, 429, { error: 'Tenant request rate limit exceeded' });
+      }
+    }
     try {
       if (req.method === 'GET' && assets.has(pathname)) {
+        if (cloudMode) return json(res, 404, { error: 'Studio UI is disabled in cloud API mode' });
         const [filename, type] = assets.get(pathname);
         const data = await readFile(path.join(publicDir, filename));
         res.writeHead(200, { 'Content-Type': type, 'Content-Length': data.length, 'Cache-Control': 'no-cache' });
         return res.end(data);
       }
       if (req.method === 'GET' && pathname === '/api/health') {
-        return json(res, 200, { status: 'ok', scope: 'local-only', persistence: 'sqlite' });
+        return json(res, 200, { status: 'ok', scope: cloudMode ? 'cloud-api-control-plane' : 'local-only',
+          persistence: 'sqlite', cloudApiEnabled: cloudMode });
       }
       if (req.method === 'GET' && pathname === '/api/jobs') {
         return json(res, 200, {
-          jobs: [...jobs.values()].slice(-40).reverse().map(job => ({
+          jobs: [...jobs.values()].filter(job => inScope(job, principal)).slice(-40).reverse().map(job => ({
             id: job.id, type: job.type, status: job.status, createdAt: job.createdAt,
             finishedAt: job.finishedAt, error: job.error, cancelRequested: job.cancelRequested === true,
             retryable: isSafeRetryable(job),
@@ -223,7 +311,7 @@ export function createStudioServer({
 
       const jobPath = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})$/i);
       if (req.method === 'GET' && jobPath) {
-        const job = jobs.get(jobPath[1]);
+        const job = findJob(jobPath[1], principal);
         if (!job) return json(res, 404, { error: 'Unknown job' });
         let report = job.result?.report || job.result;
         if (!report && job.status === 'running' && job.type !== 'discover') {
@@ -257,7 +345,7 @@ export function createStudioServer({
 
       const videoPath = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/video$/i);
       if (req.method === 'GET' && videoPath) {
-        const job = jobs.get(videoPath[1]);
+        const job = findJob(videoPath[1], principal);
         if (!job || job.status !== 'completed' || job.type !== 'render') {
           return json(res, 404, { error: 'Video is not ready' });
         }
@@ -272,7 +360,7 @@ export function createStudioServer({
 
       const subtitlesPath = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/subtitles\.(srt|vtt)$/i);
       if (req.method === 'GET' && subtitlesPath) {
-        const job = jobs.get(subtitlesPath[1]);
+        const job = findJob(subtitlesPath[1], principal);
         if (!job || job.type !== 'render' || job.status !== 'completed' ||
             !job.result?.video?.narration) {
           return json(res, 404, { error: 'Narrated subtitles unavailable' });
@@ -293,7 +381,7 @@ export function createStudioServer({
 
       const imagePath = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/screenshot\/([1-5])$/i);
       if (req.method === 'GET' && imagePath) {
-        const job = jobs.get(imagePath[1]);
+        const job = findJob(imagePath[1], principal);
         const index = Number(imagePath[2]);
         if (!job || job.type !== 'discover' || job.status !== 'completed' ||
             !job.result.report.pages[index - 1]?.screenshot) {
@@ -309,7 +397,7 @@ export function createStudioServer({
 
       const pricingImage = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/hostinger-screenshot$/i);
       if (req.method === 'GET' && pricingImage) {
-        const job = jobs.get(pricingImage[1]);
+        const job = findJob(pricingImage[1], principal);
         if (!job || job.type !== 'hostinger' || job.status !== 'completed' || !job.result.report.screenshot) {
           return json(res, 404, { error: 'Hostinger pricing screenshot not found' });
         }
@@ -323,7 +411,7 @@ export function createStudioServer({
 
       const goalScreenshot = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/goal-screenshot$/i);
       if (req.method === 'GET' && goalScreenshot) {
-        const job = jobs.get(goalScreenshot[1]);
+        const job = findJob(goalScreenshot[1], principal);
         if (!job || job.type !== 'goal' || job.status !== 'completed') {
           return json(res, 404, { error: 'Goal screenshot not found' });
         }
@@ -345,7 +433,7 @@ export function createStudioServer({
 
       const cancelMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/cancel$/i);
       if (cancelMatch) {
-        const job = jobs.get(cancelMatch[1]);
+        const job = findJob(cancelMatch[1], principal);
         if (!job) return json(res, 404, { error: 'Unknown job' });
         if (job.status === 'queued') {
           job.abortController?.abort();
@@ -367,7 +455,7 @@ export function createStudioServer({
 
       const retryMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/retry$/i);
       if (retryMatch) {
-        const source = jobs.get(retryMatch[1]);
+        const source = findJob(retryMatch[1], principal);
         if (!source) return json(res, 404, { error: 'Unknown job' });
         if (!isSafeRetryable(source)) {
           return json(res, 409, { error: 'Retry allowed only for failed/cancelled/interrupted read-only jobs; not paid AI or browser actions' });
@@ -383,7 +471,7 @@ export function createStudioServer({
           return goalImpl(request.url, {
             outDir: current.outputDir, goal: request.goal, ai: false, language: request.language, signal,
           });
-        }, request, requestKey);
+        }, request, requestKey, principal);
         return json(res, job._deduplicated ? 200 : 202, {
           jobId: job.id, status: job.status, retriedFrom: source.id,
           deduplicated: job._deduplicated === true,
@@ -401,12 +489,13 @@ export function createStudioServer({
         const goal = typeof body.goal === 'string' ? body.goal.trim() : '';
         const language = body.language ?? 'vi';
         const ai = body.ai === true;
+        if (cloudMode && ai) return json(res, 403, { error: 'Hosted AI is disabled in cloud mode until billing and cost controls are configured' });
         if (!url.success || goal.length < 4 || goal.length > 400 || !['vi', 'en'].includes(language)) {
           return json(res, 422, { error: 'Valid URL, specific goal (4–400 characters), and language vi/en required' });
         }
         const job = start('goal', (current, signal) => goalImpl(url.data, {
           goal, ai, language, outDir: current.outputDir, signal,
-        }), { url: url.data, goal, ai, language }, requestKey);
+        }), { url: url.data, goal, ai, language }, requestKey, principal);
         return json(res, job._deduplicated ? 200 : 202, {
           jobId: job.id, status: job.status, deduplicated: job._deduplicated === true,
         });
@@ -420,7 +509,7 @@ export function createStudioServer({
         if (!['vi', 'en'].includes(language)) return json(res, 422, { error: 'language must be vi or en' });
         const job = start('hostinger', (current, signal) => hostingerImpl(url, {
           outDir: current.outputDir, language, signal,
-        }), { url, language }, requestKey);
+        }), { url, language }, requestKey, principal);
         return json(res, job._deduplicated ? 200 : 202, {
           jobId: job.id, status: job.status, deduplicated: job._deduplicated === true,
         });
@@ -436,14 +525,14 @@ export function createStudioServer({
         }
         const job = start('discover', (current, signal) => exploreImpl(url.data, {
           outDir: current.outputDir, maxPages, language, signal,
-        }), { url: url.data, maxPages, language }, requestKey);
+        }), { url: url.data, maxPages, language }, requestKey, principal);
         return json(res, job._deduplicated ? 200 : 202, {
           jobId: job.id, status: job.status, deduplicated: job._deduplicated === true,
         });
       }
 
       if (pathname === '/api/assemble') {
-        const job = jobs.get(String(body.discoveryJobId || ''));
+        const job = findJob(String(body.discoveryJobId || ''), principal);
         if (!job || job.type !== 'discover' || job.status !== 'completed') {
           return json(res, 409, { error: 'Complete a discovery job first' });
         }
@@ -465,7 +554,7 @@ export function createStudioServer({
         const renderer = narrate ? renderNarrated : renderImpl;
         const job = start(preview ? 'preview' : 'render', (current, signal) =>
           renderer(checked.plan, { outDir: current.outputDir, headed: preview, preview, signal }),
-          { plan: checked.plan, narrate }, requestKey);
+          { plan: checked.plan, narrate }, requestKey, principal);
         return json(res, job._deduplicated ? 200 : 202, {
           jobId: job.id, status: job.status, deduplicated: job._deduplicated === true,
         });
