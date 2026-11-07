@@ -47,7 +47,11 @@ export class StudioJobStore {
       this.auditKeys.set(this.activeAuditKeyId, key);
     }
     this.auditKey = this.activeAuditKeyId ? this.auditKeys.get(this.activeAuditKeyId) : null;
-    this.legacyAuditKey = auditKey === null ? null : Buffer.from(auditKey);
+    // During pre-key-ID migration, the ring's active key must be the legacy signer.
+    // This permits a controlled one-time migration before switching to the new key.
+    this.legacyAuditKey = auditKeyRing !== null
+      ? Buffer.from(this.auditKeys.get(this.activeAuditKeyId))
+      : (auditKey === null ? null : Buffer.from(auditKey));
     const root = path.resolve(outputRoot);
     mkdirSync(root, { recursive: true });
     this.db = new DatabaseSync(path.join(root, 'studio-jobs.sqlite'));
