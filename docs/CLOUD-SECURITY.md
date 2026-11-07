@@ -25,6 +25,19 @@ The default Studio remains local-only and the CLI binds to `127.0.0.1`. The opt-
 - Token expiry, rotation and revocation actions are written to the SQLite audit ledger before the in-memory registry changes. Audit records contain only token IDs, principal IDs, tenant IDs and operator IDs, never credential material.
 - The registry itself is in memory only. A secret manager, operator authentication/workflow, multi-replica distribution, break-glass process and independent operational validation remain deployment requirements.
 
+Trusted host-code usage (not an HTTP endpoint):
+
+```js
+const nextCredentials = await secretManager.readCloudCredentials();
+studio.tokenAdmin.replace(nextCredentials, { actorId: 'platform-operator' });
+
+// After clients have switched to the replacement credential:
+studio.tokenAdmin.revokeToken('service-a-previous', { actorId: 'platform-operator' });
+```
+
+Each credential entry contains `tokenId`, `principalId`, `token`, `tenantId`, `projectIds`, and optional `expiresAt`. Multiple token IDs may share one principal ID only when their tenant and project ACLs are identical. The caller is responsible for authenticating the operator and distributing the new secret to all API replicas.
+
+
 ## Durable rate limiting and audit trail
 
 - Authenticated API requests consume a tenant-scoped sliding-window event in SQLite under `BEGIN IMMEDIATE`; concurrent API processes cannot independently admit requests beyond the configured tenant limit.
