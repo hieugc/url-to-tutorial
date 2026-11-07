@@ -141,13 +141,22 @@ function normalizeRecord(record, rolloutId) {
       !['in_progress', 'partial'].includes(record.state)) {
     throw new Error('Credential rollout record is missing or is not resumable');
   }
+  if (typeof record.snapshotDigest !== 'string' || !/^[a-f0-9]{64}$/.test(record.snapshotDigest) ||
+      record.replicaIds.length === 0 ||
+      record.replicaIds.some(id => typeof id !== 'string' || !IDENTIFIER.test(id)) ||
+      new Set(record.replicaIds).size !== record.replicaIds.length) {
+    throw new Error('Credential rollout record metadata is invalid');
+  }
   const acknowledged = Array.isArray(record.acknowledgedReplicaIds)
     ? record.acknowledgedReplicaIds : [];
+  if (acknowledged.some(id => !record.replicaIds.includes(id))) {
+    throw new Error('Credential rollout record contains an unknown replica acknowledgement');
+  }
   return {
     ...record,
     targetVersion: String(record.targetVersion),
     replicaIds: [...record.replicaIds].sort(),
-    acknowledgedReplicaIds: [...new Set(acknowledged)],
+    acknowledgedReplicaIds: [...new Set(acknowledged)].sort(),
   };
 }
 
@@ -184,7 +193,7 @@ async function mapLimit(items, limit, worker) {
 
 function validateStore(store) {
   for (const method of [
-    'beginRollout', 'getRollout', 'recordReplicaAck',
+    'beginRollout', 'getRollout', 'resumeRollout', 'recordReplicaAck',
     'recordReplicaFailure', 'markPartialRollout', 'completeRollout',
   ]) requireFunction(store, method);
 }
@@ -275,6 +284,17 @@ export async function runCloudCredentialRollout({
       });
     } catch {
       throw new Error('Credential rollout could not acquire its durable rollout record');
+    }
+  } else {
+    try {
+      // The store must atomically claim the expired/released partial rollout so
+      // two operators cannot resume and mutate the same replicas concurrently.
+      await rolloutStore.resumeRollout({
+        rolloutId: id,
+        actorId: identity.actorId,
+      });
+    } catch {
+      throw new Error('Credential rollout is already leased or cannot be resumed');
     }
   }
 
