@@ -156,7 +156,7 @@ test('rejects invalid snapshot material before contacting PutSecretValue', async
   await assert.rejects(publisher.publishCloudSecretSnapshot({
     snapshot: {
       tokens: [{ tokenId: 'bad', principalId: 'bad', token: 'short' }],
-      auditKeyRing: { activeKeyId: '0000000000000000', keys: {} },
+      auditKeyRing: { activeKeyId: auditKeyId, keys: { [auditKeyId]: auditKey } },
     },
     expectedCurrentVersion: '41',
   }), /invalid bearer-token registry|invalid audit key ring/);
@@ -165,11 +165,7 @@ test('rejects invalid snapshot material before contacting PutSecretValue', async
 
 test('requires a durable publish lock and verifies the lease before writing', async () => {
   const { publisher } = fakeAws();
-  const { publisher: noLockPublisher } = fakeAws(snapshot('41', tokenA), {
-    publishLock: null,
-  });
   assert.ok(publisher);
-  assert.ok(noLockPublisher);
 
   assert.throws(() => createAwsSecretsManagerPublisher({
     client: { send() {} },
@@ -201,5 +197,5 @@ test('rejects a successful PutSecretValue response if AWSCURRENT did not advance
   await assert.rejects(publisher.publishCloudSecretSnapshot({
     snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
     expectedCurrentVersion: '41',
-  }), /current secret revision changed/);
+  }), /current stage did not advance/);
 });
