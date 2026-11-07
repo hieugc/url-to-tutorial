@@ -56,7 +56,7 @@ function fakeFactory(calls = []) {
 
 test('Cloud bootstrap reads versioned secrets and forces cloud credentials into server configuration', async () => {
   const calls = [];
-  const secrets = snapshot('secret-version-1');
+  const secrets = snapshot('1');
   const bootstrap = await createCloudStudioFromSecretManager({
     secretManager: { readCloudSecrets: async () => secrets },
     serverOptions: {
@@ -76,7 +76,7 @@ test('Cloud bootstrap reads versioned secrets and forces cloud credentials into 
   assert.equal(calls[0].cloudAuditKey, null);
   assert.deepEqual(calls[0].cloudAuditKeyRing, secrets.auditKeyRing);
   assert.deepEqual(bootstrap.status(), {
-    secretVersion: 'secret-version-1',
+    secretVersion: '1',
     tokenCount: 1,
     tokenIds: ['service-a-current'],
     auditKeyRing: { activeKeyId: auditKeyId, keyIds: [auditKeyId] },
@@ -87,7 +87,7 @@ test('Cloud bootstrap reads versioned secrets and forces cloud credentials into 
 });
 
 test('Token reload requires MFA-verified operator and audits replacement before reporting success', async () => {
-  let current = snapshot('secret-version-1');
+  let current = snapshot('1');
   const auditEvents = [];
   const studioFactory = options => {
     let tokens = options.cloudTokens.map(({ token, ...safe }) => safe);
@@ -117,9 +117,9 @@ test('Token reload requires MFA-verified operator and audits replacement before 
     createStudioServerImpl: studioFactory,
   });
 
-  current = snapshot('secret-version-2', tokenB);
+  current = snapshot('2', tokenB);
   const result = await bootstrap.reloadTokens({ sessionId: 'trusted-session' });
-  assert.equal(result.secretVersion, 'secret-version-2');
+  assert.equal(result.secretVersion, '2');
   assert.deepEqual(result.tokenIds, ['service-a-current']);
   assert.deepEqual(auditEvents, [{
     action: 'auth.tokens_replaced', actorId: 'security-operator',
@@ -130,7 +130,7 @@ test('Token reload requires MFA-verified operator and audits replacement before 
 test('Token reload rejects missing MFA and does not read or mutate credentials', async () => {
   let reads = 0;
   const bootstrap = await createCloudStudioFromSecretManager({
-    secretManager: { readCloudSecrets: async () => { reads++; return snapshot('v1'); } },
+    secretManager: { readCloudSecrets: async () => { reads++; return snapshot('1'); } },
     operatorAuthenticator: {
       authorize: async () => ({ actorId: 'operator-1', mfaVerified: false }),
     },
@@ -138,11 +138,11 @@ test('Token reload rejects missing MFA and does not read or mutate credentials',
   });
   await assert.rejects(bootstrap.reloadTokens({}), /MFA-verified operator/);
   assert.equal(reads, 1, 'Unauthorized reload must not fetch the secret snapshot');
-  assert.equal(bootstrap.status().secretVersion, 'v1');
+  assert.equal(bootstrap.status().secretVersion, '1');
 });
 
 test('Token reload rejects changed credentials without a new secret version', async () => {
-  let current = snapshot('same-version');
+  let current = snapshot('1');
   const bootstrap = await createCloudStudioFromSecretManager({
     secretManager: { readCloudSecrets: async () => current },
     operatorAuthenticator: {
@@ -150,16 +150,57 @@ test('Token reload rejects changed credentials without a new secret version', as
     },
     createStudioServerImpl: fakeFactory(),
   });
-  current = snapshot('same-version', tokenB);
+  current = snapshot('1', tokenB);
   await assert.rejects(bootstrap.reloadTokens({}), /without advancing the snapshot version/);
-  assert.equal(bootstrap.status().secretVersion, 'same-version');
+  assert.equal(bootstrap.status().secretVersion, '1');
   assert.deepEqual(bootstrap.status().tokenIds, ['service-a-current']);
+});
+
+test('Token reload rejects rollback to an older provider revision', async () => {
+  let current = snapshot('1');
+  const bootstrap = await createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => current },
+    operatorAuthenticator: {
+      authorize: async () => ({ actorId: 'operator-1', mfaVerified: true }),
+    },
+    createStudioServerImpl: fakeFactory(),
+  });
+  current = snapshot('3', tokenB);
+  await bootstrap.reloadTokens({});
+  current = snapshot('2', tokenA);
+  await assert.rejects(bootstrap.reloadTokens({}), /older snapshot revision/);
+  assert.equal(bootstrap.status().secretVersion, '3');
+});
+
+test('Concurrent token reloads are serialized to prevent stale snapshots overwriting newer credentials', async () => {
+  let reads = 0;
+  let resolveNext;
+  const bootstrap = await createCloudStudioFromSecretManager({
+    secretManager: {
+      readCloudSecrets: async () => {
+        reads++;
+        if (reads === 1) return snapshot('1');
+        return new Promise(resolve => { resolveNext = resolve; });
+      },
+    },
+    operatorAuthenticator: {
+      authorize: async () => ({ actorId: 'operator-1', mfaVerified: true }),
+    },
+    createStudioServerImpl: fakeFactory(),
+  });
+  const first = bootstrap.reloadTokens({});
+  await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(bootstrap.reloadTokens({}), /already in progress/);
+  resolveNext(snapshot('2', tokenB));
+  const result = await first;
+  assert.equal(result.secretVersion, '2');
+  assert.equal(reads, 2);
 });
 
 test('Token reload refuses to change audit keys outside the staged rotation workflow', async () => {
   const nextKey = 'bootstrap-next-audit-signing-key-material-0123456789';
   const nextId = createHash('sha256').update(nextKey).digest('hex').slice(0, 16);
-  let current = snapshot('v1');
+  let current = snapshot('1');
   const bootstrap = await createCloudStudioFromSecretManager({
     secretManager: { readCloudSecrets: async () => current },
     operatorAuthenticator: {
@@ -167,18 +208,18 @@ test('Token reload refuses to change audit keys outside the staged rotation work
     },
     createStudioServerImpl: fakeFactory(),
   });
-  current = snapshot('v2', tokenB, {
+  current = snapshot('2', tokenB, {
     activeKeyId: auditKeyId,
     keys: { [auditKeyId]: auditKey, [nextId]: nextKey },
   });
   await assert.rejects(bootstrap.reloadTokens({}), /separate staged key-rotation workflow/);
-  assert.equal(bootstrap.status().secretVersion, 'v1');
+  assert.equal(bootstrap.status().secretVersion, '1');
 });
 
 test('Cloud bootstrap integrates with the real Studio factory and records MFA token reload', async t => {
   const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'url-tutorial-cloud-bootstrap-'));
   t.after(() => rm(outputRoot, { recursive: true, force: true }));
-  let current = snapshot('secret-version-1');
+  let current = snapshot('1');
   const cloud = await createCloudStudioFromSecretManager({
     secretManager: { readCloudSecrets: async () => current },
     operatorAuthenticator: {
@@ -193,9 +234,9 @@ test('Cloud bootstrap integrates with the real Studio factory and records MFA to
   });
   try {
     assert.equal(cloud.status().tokenCount, 1);
-    current = snapshot('secret-version-2', tokenB);
+    current = snapshot('2', tokenB);
     const status = await cloud.reloadTokens({ session: 'mfa-verified' });
-    assert.equal(status.secretVersion, 'secret-version-2');
+    assert.equal(status.secretVersion, '2');
     const audit = cloud.studio.store.cloudAuditEvents('tenant-a');
     assert.ok(audit.some(event =>
       event.action === 'auth.tokens_replaced' && event.principalId === 'security-operator'));
@@ -209,7 +250,7 @@ test('Cloud bootstrap fails closed when the secret manager is missing or returns
   await assert.rejects(createCloudStudioFromSecretManager({}), /readCloudSecrets/);
   let factoryCalls = 0;
   await assert.rejects(createCloudStudioFromSecretManager({
-    secretManager: { readCloudSecrets: async () => ({ version: 'v1', tokens: [] }) },
+    secretManager: { readCloudSecrets: async () => ({ version: '1', tokens: [] }) },
     createStudioServerImpl: () => { factoryCalls++; },
   }), /at least one cloud token/);
   assert.equal(factoryCalls, 0);
