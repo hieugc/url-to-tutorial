@@ -13,25 +13,14 @@ function positiveInteger(value, fallback, name) {
   return resolved;
 }
 
-/**
- * Small bearer-token control plane for a future cloud deployment.
- * Store only SHA-256 token digests in memory; provide raw tokens via a secret
- * manager/environment at process startup. This is not a network sandbox.
- */
-export function createCloudAuth({ tokens, limits = {}, clock = Date.now } = {}) {
-  if (!Array.isArray(tokens) || tokens.length === 0) {
+function compileTokenRegistry(entries, { allowEmpty = false } = {}) {
+  if (!Array.isArray(entries) || (!allowEmpty && entries.length === 0)) {
     throw new TypeError('Cloud mode requires at least one configured bearer token');
   }
-
-  const configuredLimits = Object.freeze({
-    maxRequestsPerMinute: positiveInteger(limits.maxRequestsPerMinute, 60, 'maxRequestsPerMinute'),
-    maxConcurrentJobsPerTenant: positiveInteger(
-      limits.maxConcurrentJobsPerTenant, 2, 'maxConcurrentJobsPerTenant'),
-    maxJobsPerDay: positiveInteger(limits.maxJobsPerDay, 50, 'maxJobsPerDay'),
-  });
-
-  const principals = new Map();
-  for (const entry of tokens) {
+  const registry = new Map();
+  const tokenIds = new Set();
+  const principalScopes = new Map();
+  for (const entry of entries) {
     if (!entry || typeof entry !== 'object' || typeof entry.token !== 'string' || !TOKEN.test(entry.token) ||
         !ID.test(entry.tenantId || '') || !Array.isArray(entry.projectIds) ||
         entry.projectIds.length === 0 ||
@@ -41,14 +30,62 @@ export function createCloudAuth({ tokens, limits = {}, clock = Date.now } = {}) 
     }
     const digest = createHash('sha256').update(entry.token, 'utf8').digest();
     const key = digest.toString('hex');
-    if (principals.has(key)) throw new TypeError('Duplicate cloud bearer token');
-    principals.set(key, Object.freeze({
-      principalId: typeof entry.id === 'string' && ID.test(entry.id)
-        ? entry.id : key.slice(0, 16),
-      tenantId: entry.tenantId,
+    if (registry.has(key)) throw new TypeError('Duplicate cloud bearer token');
+
+    const principalId = entry.principalId ?? entry.id ?? key.slice(0, 16);
+    const tokenId = entry.tokenId ?? key.slice(0, 16);
+    if (!ID.test(principalId) || !ID.test(tokenId)) {
+      throw new TypeError('Cloud token principalId and tokenId must be valid identifiers');
+    }
+    if (tokenIds.has(tokenId)) throw new TypeError('Duplicate cloud tokenId');
+    const projectIds = [...entry.projectIds].sort();
+    const scope = JSON.stringify({ tenantId: entry.tenantId, projectIds });
+    if (principalScopes.has(principalId) && principalScopes.get(principalId) !== scope) {
+      throw new TypeError('All credentials for a principal must share the same tenant and project ACL');
+    }
+    principalScopes.set(principalId, scope);
+    let expiresAt = null;
+    let expiresAtMs = null;
+    if (entry.expiresAt !== undefined && entry.expiresAt !== null) {
+      if (typeof entry.expiresAt !== 'string' || !Number.isFinite(Date.parse(entry.expiresAt))) {
+        throw new TypeError('Cloud token expiresAt must be a valid ISO date string');
+      }
+      expiresAtMs = Date.parse(entry.expiresAt);
+      expiresAt = new Date(expiresAtMs).toISOString();
+    }
+    tokenIds.add(tokenId);
+    registry.set(key, Object.freeze({
+      tokenId, principalId, tenantId: entry.tenantId,
       projectIds: Object.freeze([...entry.projectIds]),
+      expiresAt, expiresAtMs,
     }));
   }
+  return registry;
+}
+
+function safeTokenSnapshot(registry) {
+  return Object.freeze([...registry.values()]
+    .map(({ tokenId, principalId, tenantId, projectIds, expiresAt }) => Object.freeze({
+      tokenId, principalId, tenantId, projectIds: [...projectIds], expiresAt,
+    }))
+    .sort((a, b) => a.tokenId.localeCompare(b.tokenId)));
+}
+
+/**
+ * Bearer-token control plane for a future cloud deployment.
+ * Raw credentials are accepted only from trusted process code (normally a
+ * secret manager). The registry retains only SHA-256 digests. No HTTP token
+ * administration endpoint is provided by this module.
+ */
+export function createCloudAuth({ tokens, limits = {}, clock = Date.now } = {}) {
+  let principals = compileTokenRegistry(tokens);
+
+  const configuredLimits = Object.freeze({
+    maxRequestsPerMinute: positiveInteger(limits.maxRequestsPerMinute, 60, 'maxRequestsPerMinute'),
+    maxConcurrentJobsPerTenant: positiveInteger(
+      limits.maxConcurrentJobsPerTenant, 2, 'maxConcurrentJobsPerTenant'),
+    maxJobsPerDay: positiveInteger(limits.maxJobsPerDay, 50, 'maxJobsPerDay'),
+  });
 
   const requests = new Map();
 
@@ -58,11 +95,15 @@ export function createCloudAuth({ tokens, limits = {}, clock = Date.now } = {}) 
     const match = /^Bearer ([A-Za-z0-9._~-]{32,256})$/.exec(header);
     if (!match) return null;
     const candidate = createHash('sha256').update(match[1], 'utf8').digest();
+    const now = clock();
     let authenticated = null;
     // Compare every configured digest to avoid leaking which token matched.
     for (const [hex, principal] of principals) {
       const expected = Buffer.from(hex, 'hex');
-      if (timingSafeEqual(candidate, expected)) authenticated = principal;
+      if (timingSafeEqual(candidate, expected) &&
+          (principal.expiresAtMs === null || now < principal.expiresAtMs)) {
+        authenticated = principal;
+      }
     }
     return authenticated;
   }
@@ -75,6 +116,35 @@ export function createCloudAuth({ tokens, limits = {}, clock = Date.now } = {}) 
       tenantId: principal.tenantId,
       projectId,
     });
+  }
+
+  function replaceTokens(nextTokens) {
+    const next = compileTokenRegistry(nextTokens, { allowEmpty: true });
+    principals = next;
+    return safeTokenSnapshot(principals);
+  }
+
+  function revokeToken(tokenId) {
+    if (typeof tokenId !== 'string' || !ID.test(tokenId)) return null;
+    for (const [digest, principal] of principals) {
+      if (principal.tokenId === tokenId) {
+        principals.delete(digest);
+        return safeTokenSnapshot(new Map([[digest, principal]])).at(0);
+      }
+    }
+    return null;
+  }
+
+  function revokePrincipal(principalId) {
+    if (typeof principalId !== 'string' || !ID.test(principalId)) return [];
+    const revoked = [];
+    for (const [digest, principal] of principals) {
+      if (principal.principalId === principalId) {
+        revoked.push(principal);
+        principals.delete(digest);
+      }
+    }
+    return safeTokenSnapshot(new Map(revoked.map((principal, index) => [String(index), principal])));
   }
 
   function consumeRequest(principal, store = null) {
@@ -123,5 +193,10 @@ export function createCloudAuth({ tokens, limits = {}, clock = Date.now } = {}) 
     authorizeProject,
     consumeRequest,
     checkJobQuota,
+    tokenSnapshot: () => safeTokenSnapshot(principals),
+    validateTokens: nextTokens => safeTokenSnapshot(compileTokenRegistry(nextTokens, { allowEmpty: true })),
+    replaceTokens,
+    revokeToken,
+    revokePrincipal,
   });
 }

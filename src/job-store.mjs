@@ -135,8 +135,21 @@ export class StudioJobStore {
     );
   }
 
+  recordCloudAudits(events) {
+    if (!Array.isArray(events)) throw new TypeError('Cloud audit events must be an array');
+    if (events.length === 0) return;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const event of events) this.insertCloudAudit(event);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   recordCloudAudit(event) {
-    this.insertCloudAudit(event);
+    this.recordCloudAudits([event]);
   }
 
   cloudAuditEvents(tenantId) {

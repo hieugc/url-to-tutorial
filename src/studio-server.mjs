@@ -222,6 +222,68 @@ export function createStudioServer({
     });
   }
 
+  function operatorId(value) {
+    if (value === undefined) return 'operator';
+    if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.@-]{1,63}$/.test(value)) {
+      throw new TypeError('Token administration actorId must be a valid operator identifier');
+    }
+    return value;
+  }
+
+  function replaceCloudTokens(nextTokens, { actorId } = {}) {
+    if (!cloudMode) throw new Error('Token administration is available only in cloud mode');
+    const actor = operatorId(actorId);
+    const before = cloudAuth.tokenSnapshot();
+    const after = cloudAuth.validateTokens(nextTokens);
+    const tenantIds = new Set([...before, ...after].map(token => token.tenantId));
+    const events = [...tenantIds].map(tenantId => ({
+      tenantId, principalId: actor, action: 'auth.tokens_replaced',
+      details: {
+        activeTokenIds: after.filter(token => token.tenantId === tenantId).map(token => token.tokenId),
+        principalIds: [...new Set(after.filter(token => token.tenantId === tenantId)
+          .map(token => token.principalId))],
+      },
+    }));
+    // Persist the operator action before swapping the in-memory registry. If
+    // SQLite cannot record it, the active credentials remain unchanged.
+    store.recordCloudAudits(events);
+    return cloudAuth.replaceTokens(nextTokens);
+  }
+
+  function revokeCloudToken(tokenId, { actorId } = {}) {
+    if (!cloudMode) throw new Error('Token administration is available only in cloud mode');
+    const actor = operatorId(actorId);
+    const existing = cloudAuth.tokenSnapshot().find(token => token.tokenId === tokenId);
+    if (!existing) return false;
+    store.recordCloudAudit({
+      tenantId: existing.tenantId, principalId: actor,
+      action: 'auth.token_revoked', outcome: 'success',
+      details: { tokenId: existing.tokenId, principalId: existing.principalId },
+    });
+    return Boolean(cloudAuth.revokeToken(tokenId));
+  }
+
+  function revokeCloudPrincipal(principalId, { actorId } = {}) {
+    if (!cloudMode) throw new Error('Token administration is available only in cloud mode');
+    const actor = operatorId(actorId);
+    const existing = cloudAuth.tokenSnapshot().filter(token => token.principalId === principalId);
+    if (existing.length === 0) return 0;
+    const tenantIds = new Set(existing.map(token => token.tenantId));
+    store.recordCloudAudits([...tenantIds].map(tenantId => ({
+      tenantId, principalId: actor, action: 'auth.principal_revoked', outcome: 'success',
+      details: { revokedPrincipalId: principalId,
+        tokenIds: existing.filter(token => token.tenantId === tenantId).map(token => token.tokenId) },
+    })));
+    return cloudAuth.revokePrincipal(principalId).length;
+  }
+
+  const tokenAdmin = cloudMode ? Object.freeze({
+    list: () => cloudAuth.tokenSnapshot(),
+    replace: replaceCloudTokens,
+    revokeToken: revokeCloudToken,
+    revokePrincipal: revokeCloudPrincipal,
+  }) : null;
+
   function cloudRequestAllowed(req) {
     let host;
     try {
@@ -674,7 +736,7 @@ export function createStudioServer({
     // their terminal state. A hard process kill is recovered as interrupted.
     queue.finally(() => store.close());
   });
-  return { server, jobs, store };
+  return { server, jobs, store, tokenAdmin };
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {

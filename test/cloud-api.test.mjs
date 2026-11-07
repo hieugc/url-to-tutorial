@@ -412,3 +412,119 @@ test('Cloud worker symlinks cannot make the API read host files as reports or ar
   assert.equal(video.status, 404);
   assert.equal(JSON.stringify(video.data).includes('host-only-sentinel'), false);
 });
+
+
+test('Cloud credentials support staged rotation, individual revocation, principal revocation and expiry', () => {
+  let now = Date.parse('2026-11-07T00:00:00.000Z');
+  const rotatedToken = 'tenant-a-rotated-secret-0123456789abcdef';
+  const auth = createCloudAuth({
+    clock: () => now,
+    tokens: [{
+      id: 'service-a', tokenId: 'service-a-old', token: tokenA,
+      tenantId: 'tenant-a', projectIds: ['project-a'],
+    }],
+  });
+  const request = token => ({ headers: { authorization: 'Bearer ' + token } });
+  assert.equal(auth.authenticate(request(tokenA)).principalId, 'service-a');
+
+  const overlap = auth.replaceTokens([
+    { id: 'service-a', tokenId: 'service-a-old', token: tokenA,
+      tenantId: 'tenant-a', projectIds: ['project-a'] },
+    { id: 'service-a', tokenId: 'service-a-new', token: rotatedToken,
+      tenantId: 'tenant-a', projectIds: ['project-a'] },
+  ]);
+  assert.equal(overlap.length, 2, 'Rotation can overlap old and new credentials');
+  assert.equal(auth.authenticate(request(tokenA)).principalId, 'service-a');
+  assert.equal(auth.authenticate(request(rotatedToken)).principalId, 'service-a');
+
+  assert.equal(auth.revokeToken('service-a-old').tokenId, 'service-a-old');
+  assert.equal(auth.authenticate(request(tokenA)), null);
+  assert.equal(auth.authenticate(request(rotatedToken)).principalId, 'service-a');
+  assert.equal(auth.revokePrincipal('service-a').length, 1);
+  assert.equal(auth.authenticate(request(rotatedToken)), null);
+  assert.deepEqual(auth.tokenSnapshot(), []);
+
+  auth.replaceTokens([{
+    id: 'service-a', tokenId: 'service-a-expiring', token: tokenA,
+    tenantId: 'tenant-a', projectIds: ['project-a'],
+    expiresAt: new Date(now + 1000).toISOString(),
+  }]);
+  assert.equal(auth.authenticate(request(tokenA)).principalId, 'service-a');
+  now += 1000;
+  assert.equal(auth.authenticate(request(tokenA)), null, 'Expired tokens stop authenticating at expiry');
+  assert.throws(() => auth.replaceTokens([{
+    id: 'service-a', tokenId: 'service-a-expiring', token: tokenA,
+    tenantId: 'tenant-a', projectIds: ['project-a'], expiresAt: 'not-a-date',
+  }]), /expiresAt/);
+  assert.throws(() => auth.replaceTokens([
+    { id: 'service-a', tokenId: 'duplicate-id', token: tokenA,
+      tenantId: 'tenant-a', projectIds: ['project-a'] },
+    { id: 'service-a', tokenId: 'duplicate-id', token: rotatedToken,
+      tenantId: 'tenant-a', projectIds: ['project-a'] },
+  ]), /Duplicate cloud tokenId/);
+  assert.throws(() => auth.replaceTokens([
+    { id: 'service-a', tokenId: 'scope-one', token: tokenA,
+      tenantId: 'tenant-a', projectIds: ['project-a'] },
+    { id: 'service-a', tokenId: 'scope-two', token: rotatedToken,
+      tenantId: 'tenant-a', projectIds: ['project-a2'] },
+  ]), /same tenant and project ACL/);
+});
+
+test('Cloud token administration is in-process only, audited and secret-free', async t => {
+  const root = await temp();
+  const studio = createStudioServer(serverOptions(root));
+  const origin = await listen(studio.server);
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+  const rotatedToken = 'tenant-a-rotated-secret-0123456789abcdef';
+  assert.equal((await call(origin, '/api/jobs', {
+    token: tokenA, projectId: 'project-a',
+  })).status, 200);
+
+  const snapshot = studio.tokenAdmin.replace([
+    { id: 'service-a', tokenId: 'service-a-old', token: tokenA,
+      tenantId: 'tenant-a', projectIds: ['project-a', 'project-a2'] },
+    { id: 'service-a', tokenId: 'service-a-new', token: rotatedToken,
+      tenantId: 'tenant-a', projectIds: ['project-a', 'project-a2'] },
+    { id: 'service-b', tokenId: 'service-b-main', token: tokenB,
+      tenantId: 'tenant-b', projectIds: ['project-b'] },
+  ], { actorId: 'ops-user' });
+  assert.equal(snapshot.length, 3);
+  assert.ok(snapshot.every(entry => !('token' in entry) && !('digest' in entry)));
+  assert.equal((await call(origin, '/api/jobs', {
+    token: tokenA, projectId: 'project-a',
+  })).status, 200, 'Old token remains valid during staged rotation');
+  assert.equal((await call(origin, '/api/jobs', {
+    token: rotatedToken, projectId: 'project-a',
+  })).status, 200, 'New token is valid before old-token revocation');
+
+  assert.equal(studio.tokenAdmin.revokeToken('service-a-old', {
+    actorId: 'ops-user',
+  }), true);
+  assert.equal((await call(origin, '/api/jobs', {
+    token: tokenA, projectId: 'project-a',
+  })).status, 401);
+  assert.equal((await call(origin, '/api/jobs', {
+    token: rotatedToken, projectId: 'project-a',
+  })).status, 200);
+
+  assert.equal(studio.tokenAdmin.revokePrincipal('service-a', {
+    actorId: 'ops-user',
+  }), 1);
+  assert.equal((await call(origin, '/api/jobs', {
+    token: rotatedToken, projectId: 'project-a',
+  })).status, 401);
+  assert.equal((await call(origin, '/api/admin/tokens', {
+    token: tokenB, projectId: 'project-b',
+  })).status, 404, 'Token administration must not be exposed as a tenant HTTP route');
+
+  const audit = studio.store.cloudAuditEvents('tenant-a');
+  assert.deepEqual(audit.map(event => event.action), [
+    'auth.tokens_replaced', 'auth.token_revoked', 'auth.principal_revoked',
+  ]);
+  assert.ok(audit.every(event => event.principalId === 'ops-user'));
+  const serialized = JSON.stringify(audit);
+  for (const secret of [tokenA, tokenB, rotatedToken]) assert.ok(!serialized.includes(secret));
+});

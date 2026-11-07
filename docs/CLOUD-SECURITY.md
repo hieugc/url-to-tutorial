@@ -14,6 +14,30 @@ The default Studio remains local-only and the CLI binds to `127.0.0.1`. The opt-
 - Cloud mode rejects hosted AI, interactive preview and render plans containing `click`, `fill` or `navigate`. Only read-only `highlight`, `branch` and `stop` plans are accepted.
 - The local Studio UI is not served in cloud mode. The existing global queue cap and 512 KiB request-body limit remain active.
 
+## Bearer-token rotation, expiry and revocation
+
+- Credentials have a stable `tokenId` (credential identity) and `principalId` (logical service identity). Multiple credentials may overlap for one principal during a planned rotation, but all credentials for that principal must retain the same tenant and project ACL.
+- Optional `expiresAt` is an ISO timestamp. Expired credentials fail authentication immediately; expiry is checked for every authenticated request.
+- The trusted embedding process receives a non-HTTP `tokenAdmin` capability from `createStudioServer`. It provides `list()`, `replace(nextTokens, { actorId })`, `revokeToken(tokenId, { actorId })` and `revokePrincipal(principalId, { actorId })`. It never returns raw tokens or token digests.
+- No tenant-facing or network token-administration route exists. Only trusted host code should call this capability after authenticating an operator and retrieving the replacement credential set from a secret manager.
+- Staged rotation: add the new credential with a new `tokenId` and the same `principalId`; deploy the new secret to clients; verify use of the new credential; then revoke the old `tokenId`. `replace` can also atomically replace the complete in-memory registry, including an empty set for emergency disablement.
+- Revocation takes effect for subsequent requests in the current process. It does not cancel requests already authenticated or revoke a token in another process unless that process receives the same secret-manager update. Rehydrate the complete registry from the secret manager at startup and broadcast replacements to every API replica.
+- Token expiry, rotation and revocation actions are written to the SQLite audit ledger before the in-memory registry changes. Audit records contain only token IDs, principal IDs, tenant IDs and operator IDs, never credential material.
+- The registry itself is in memory only. A secret manager, operator authentication/workflow, multi-replica distribution, break-glass process and independent operational validation remain deployment requirements.
+
+Trusted host-code usage (not an HTTP endpoint):
+
+```js
+const nextCredentials = await secretManager.readCloudCredentials();
+studio.tokenAdmin.replace(nextCredentials, { actorId: 'platform-operator' });
+
+// After clients have switched to the replacement credential:
+studio.tokenAdmin.revokeToken('service-a-previous', { actorId: 'platform-operator' });
+```
+
+Each credential entry contains `tokenId`, `principalId`, `token`, `tenantId`, `projectIds`, and optional `expiresAt`. Multiple token IDs may share one principal ID only when their tenant and project ACLs are identical. The caller is responsible for authenticating the operator and distributing the new secret to all API replicas.
+
+
 ## Durable rate limiting and audit trail
 
 - Authenticated API requests consume a tenant-scoped sliding-window event in SQLite under `BEGIN IMMEDIATE`; concurrent API processes cannot independently admit requests beyond the configured tenant limit.
@@ -96,7 +120,7 @@ No public cloud startup command or deployment is included in this PR. The defaul
 ## Remaining release gates — keep UTV-009 OPEN
 
 - Deploy and independently verify the TLS reverse proxy, Host allowlist and trusted forwarding-header behavior.
-- Add token rotation/revocation, tenant/project administration and a secret-manager integration.
+- Add a secret-manager integration, authenticated operator workflow, multi-replica credential distribution, tenant/project administration and break-glass procedures.
 - Add audit retention/archival, an external append-only sink or tamper-evident integrity protection, and operational monitoring for SQLite disk/database failures.
 - Add billing/cost accounting, per-tenant storage budgets, artifact encryption and a tested retention/deletion process.
 - Add an OS-level host firewall policy for the proxy, independent review of Docker bridge rules, and red-team tests for DNS rebinding, redirects, nested subresources, metadata endpoints, tenant enumeration, parallel abuse and cancellation races.
