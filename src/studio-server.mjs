@@ -267,8 +267,7 @@ export function createStudioServer({
       const costMicros =
         Math.ceil(workerMs / 1000) * workerCostPerSecondMicros +
         Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
-      store.finalizeCloudUsage(job, { workerMs, artifactBytes, costMicros, period, outcome: 'interrupted' });
-      store.recordCloudAudit({
+      store.finalizeCloudUsage(job, { workerMs, artifactBytes, costMicros, period, outcome: 'interrupted' }, {
         tenantId: job.tenantId, projectId: job.projectId, action: 'job.interrupted_recovered',
         resourceId: job.id, outcome: 'failed', details: { workerMs, artifactBytes, costMicros },
       });
@@ -731,9 +730,15 @@ export function createStudioServer({
             const costMicros = Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
             store.finalizeCloudUsage(job, {
               workerMs: 0, artifactBytes, costMicros, period, outcome: 'cancelled',
+            }, {
+              tenantId: job.tenantId, projectId: job.projectId,
+              principalId: principal?.principalId || null, action: 'job.cancelled',
+              resourceId: job.id, outcome: 'success',
+              details: { jobType: job.type, phase: 'queued' },
             });
+          } else {
+            audit(principal, 'job.cancelled', job.id, 'success', { jobType: job.type, phase: 'queued' });
           }
-          audit(principal, 'job.cancelled', job.id, 'success', { jobType: job.type, phase: 'queued' });
           pruneHistory();
           return json(res, 200, { id: job.id, status: job.status });
         }
