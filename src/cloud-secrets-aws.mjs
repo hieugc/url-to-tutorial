@@ -333,6 +333,7 @@ export function createAwsSecretsManagerPublisher({
         if (latest.version !== nextVersion) {
           throw new Error('AWS current stage did not advance to the published revision');
         }
+        await assertPublishLease(lease);
 
         return Object.freeze({
           version: nextVersion,
