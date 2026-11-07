@@ -61,7 +61,7 @@ export class StudioJobStore {
     this.put.run(snapshot.id, snapshot.createdAt || now, now, JSON.stringify(snapshot));
   }
 
-  saveCloudSubmission(job) {
+  saveCloudSubmission(job, auditEvent = null) {
     if (!job?.tenantId || !job?.projectId || !job?.id || !job?.createdAt) {
       throw new TypeError('Cloud submission requires job, tenant and project identity');
     }
@@ -73,6 +73,7 @@ export class StudioJobStore {
     try {
       this.put.run(snapshot.id, snapshot.createdAt, now, JSON.stringify(snapshot));
       this.recordCloudSubmission.run(snapshot.id, snapshot.tenantId, snapshot.projectId, snapshot.createdAt);
+      if (auditEvent) this.insertCloudAudit(auditEvent);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -117,7 +118,7 @@ export class StudioJobStore {
     }
   }
 
-  recordCloudAudit(event) {
+  insertCloudAudit(event) {
     if (!event || typeof event.tenantId !== 'string' || !event.tenantId ||
         typeof event.action !== 'string' || !/^[a-z][a-z0-9_.-]{1,63}$/.test(event.action) ||
         !['success', 'denied', 'failed'].includes(event.outcome || 'success')) {
@@ -132,6 +133,10 @@ export class StudioJobStore {
       randomUUID(), event.tenantId, event.projectId || null, event.principalId || null,
       event.action, event.resourceId || null, event.outcome || 'success', createdAt, details,
     );
+  }
+
+  recordCloudAudit(event) {
+    this.insertCloudAudit(event);
   }
 
   cloudAuditEvents(tenantId) {
