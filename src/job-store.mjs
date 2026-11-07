@@ -16,6 +16,8 @@ export class StudioJobStore {
       'id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS cloud_job_submissions (' +
       'job_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT NOT NULL, created_at TEXT NOT NULL)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS cloud_job_submissions_tenant_time ' +
+      'ON cloud_job_submissions(tenant_id, created_at)');
     this.put = this.db.prepare('INSERT INTO studio_jobs (id, created_at, updated_at, json) VALUES (?, ?, ?, ?) ' +
       'ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at, json=excluded.json');
     this.recordCloudSubmission = this.db.prepare('INSERT OR IGNORE INTO cloud_job_submissions ' +
