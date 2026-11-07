@@ -66,9 +66,13 @@ const { server } = createStudioServer({
   renderImpl: async (_plan, { outDir, preview }) => {
     renderImplCalls++;
     const video = { codec: 'h264', width: 1280, height: 720, duration: 2, path: path.join(outDir, 'tutorial.mp4') };
-    if (!preview) await writeFile(video.path, Buffer.from('fake MP4 API test fixture'));
-    return { status: 'completed', steps: [{ id: 'intro', status: 'completed' }],
+    const result = { status: 'completed', steps: [{ id: 'intro', status: 'completed' }],
       ...(!preview ? { video } : {}) };
+    if (!preview) {
+      await writeFile(video.path, Buffer.from('fake MP4 API test fixture'));
+      await writeFile(path.join(outDir, 'report.json'), JSON.stringify(result));
+    }
+    return result;
   },
 });
 
