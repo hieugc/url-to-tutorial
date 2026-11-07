@@ -205,7 +205,11 @@ export function createStudioServer({
     const pending = allJobs.filter(job => ['queued', 'running'].includes(job.status)).length;
     if (pending >= MAX_PENDING) throw bad('Job queue is full (4 pending jobs)', 429);
     if (cloudMode) {
-      const quota = cloudAuth.checkJobQuota(allJobs, principal);
+      const now = Date.now();
+      const cutoff = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+      store.pruneCloudSubmissions(cutoff);
+      const dailyCount = store.countCloudSubmissions(principal.tenantId, cutoff);
+      const quota = cloudAuth.checkJobQuota(allJobs, principal, now, dailyCount);
       if (!quota.allowed) throw bad(quota.reason, 429);
     }
     const id = randomUUID();
@@ -220,7 +224,8 @@ export function createStudioServer({
       ...(cloudMode ? { tenantId: principal.tenantId, projectId: principal.projectId } : {}),
       idempotencyKey: key, requestHash, cancelRequested: false,
       abortController: new AbortController() };
-    store.save(job);
+    if (cloudMode) store.saveCloudSubmission(job);
+    else store.save(job);
     jobs.set(id, job);
     pruneHistory();
     queue = queue.catch(() => {}).then(async () => {
