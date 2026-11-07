@@ -5,6 +5,7 @@ import { render } from './render.mjs';
 import { renderNarrated } from './narration.mjs';
 import { HttpUrl, Plan, validatePlanForExecution } from './plan.mjs';
 import { publicUrlPreflight } from './cloud-egress.mjs';
+import { pathToFileURL } from 'node:url';
 
 const JOB_ID = /^[a-f0-9-]{36}$/i;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/;
@@ -43,7 +44,6 @@ export async function runCloudWorkerJob(payload, {
   hostingerImpl = createHostingerGuide,
   renderImpl = render,
   narrateImpl = renderNarrated,
-  preflight = publicUrlPreflight,
 } = {}) {
   if (!payload || typeof payload !== 'object' || !JOB_ID.test(payload.jobId || '') ||
       !ID.test(payload.tenantId || '') || !ID.test(payload.projectId || '') ||
@@ -116,7 +116,7 @@ async function main() {
   }
 }
 
-if (process.argv[1] && new URL('file://' + process.argv[1]).href === import.meta.url) {
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   main().catch(error => {
     process.stderr.write((error?.name === 'AbortError' ? 'Cloud worker cancelled' : error?.message || 'Cloud worker failed') + '\n');
     process.exitCode = 1;
