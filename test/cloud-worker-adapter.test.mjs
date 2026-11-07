@@ -20,6 +20,7 @@ test('Docker worker run is non-root, read-only, resource-limited and mounts only
   assert.ok(args.includes('utv-job-' + jobId));
   assert.ok(args.includes('--pids-limit=128'));
   assert.ok(args.includes('--memory=2g'));
+  assert.ok(args.includes('--shm-size=256m'));
   assert.ok(args.includes('--cpus=2'));
   assert.ok(args.includes('10001:10001'));
   assert.ok(args.some(arg => arg.startsWith('type=bind,src=/srv/tutorial/output/job-1,dst=/job,rw')));
@@ -53,6 +54,11 @@ test('Docker adapter creates one internal network, attaches only proxy, runs a o
   t.after(() => rm(root, { recursive: true, force: true }));
   const output = path.join(root, jobId);
   const log = path.join(root, 'docker-calls.jsonl');
+  const originalLog = process.env.FAKE_DOCKER_LOG;
+  t.after(() => {
+    if (originalLog === undefined) delete process.env.FAKE_DOCKER_LOG;
+    else process.env.FAKE_DOCKER_LOG = originalLog;
+  });
   await import('node:fs/promises').then(fs => fs.mkdir(output));
   const fakeDocker = path.join(root, 'docker-fake.mjs');
   const fakeSource = `#!/usr/bin/env node
