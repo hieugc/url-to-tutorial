@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, rm, writeFile, symlink } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildDockerWorkerRunArgs, createDockerWorkerAdapter, directoryBytes } from '../src/cloud-worker-adapter.mjs';
@@ -104,7 +104,7 @@ if (args[0] === 'run') {
   assert.ok(connect.args.includes('egress-proxy'));
   assert.ok(run.args.includes('--read-only'));
   assert.ok(run.args.includes('--cap-drop=ALL'));
-  assert.ok(run.args.some(arg => arg.startsWith('type=bind,src=' + output + ',dst=/job,rw')));
+  assert.ok(run.args.some(arg => arg.startsWith('type=bind,src=' + await realpath(output) + ',dst=/job,rw')));
   assert.deepEqual(JSON.parse(run.input).request, {
     url: 'https://example.com', maxPages: 1, language: 'en',
   });
