@@ -218,3 +218,37 @@ test('Cloud API rate-limits per tenant and emits Retry-After', async t => {
     Number(limited.headers['retry-after']) <= 60);
   assert.equal((await call(origin, '/api/jobs', { token: tokenB, projectId: 'project-b' })).status, 200);
 });
+
+
+test('Daily tenant quota survives Studio restart in SQLite', async t => {
+  const root = await temp();
+  let first = createStudioServer(serverOptions(root, {
+    cloudLimits: { maxJobsPerDay: 1 },
+  }));
+  let origin = await listen(first.server);
+  const firstJob = await call(origin, '/api/discover', {
+    method: 'POST', token: tokenA, projectId: 'project-a',
+    body: { url: 'https://example.com', language: 'en', maxPages: 1 },
+  });
+  assert.equal(firstJob.status, 202);
+  assert.equal((await waitForJob(origin, firstJob.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+  await new Promise(resolve => first.server.close(resolve));
+
+  const second = createStudioServer(serverOptions(root, {
+    cloudLimits: { maxJobsPerDay: 1 },
+  }));
+  origin = await listen(second.server);
+  t.after(async () => {
+    await new Promise(resolve => second.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const blocked = await call(origin, '/api/discover', {
+    method: 'POST', token: tokenA, projectId: 'project-a2',
+    body: { url: 'https://example.org', language: 'en', maxPages: 1 },
+  });
+  assert.equal(blocked.status, 429);
+  assert.match(blocked.data.error, /daily-job quota/);
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  assert.equal(second.store.countCloudSubmissions('tenant-a', since), 1);
+});
