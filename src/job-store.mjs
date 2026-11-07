@@ -86,8 +86,13 @@ export class StudioJobStore {
       'UPDATE cloud_audit_events SET sequence=?, previous_hash=?, event_hash=? WHERE event_id=?');
     this.deleteStatement = this.db.prepare('DELETE FROM studio_jobs WHERE id=?');
     if (this.auditKey) {
-      this.initializeAuditChain();
-      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS cloud_audit_events_sequence ON cloud_audit_events(sequence)');
+      try {
+        this.initializeAuditChain();
+        this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS cloud_audit_events_sequence ON cloud_audit_events(sequence)');
+      } catch (error) {
+        this.db.close();
+        throw error;
+      }
     }
   }
 
