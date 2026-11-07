@@ -220,6 +220,7 @@ export function createStudioServer({
   cloudPreflight = publicUrlPreflight,
   cloudPricing = {},
   cloudAuditArchive = null,
+  cloudAuditKeyRing = null,
 } = {}) {
   const allowedCloudHosts = new Set(cloudAllowedHosts.map(host => String(host).trim().toLowerCase()));
   if (cloudMode && (!allowedCloudHosts.size ||
@@ -235,8 +236,12 @@ export function createStudioServer({
   if (cloudMode && typeof cloudWorker !== 'function') {
     throw new TypeError('Cloud mode requires an isolated-worker adapter; local browser execution is disabled');
   }
-  if (cloudMode && (typeof cloudAuditKey !== 'string' || Buffer.byteLength(cloudAuditKey) < 32)) {
-    throw new TypeError('Cloud mode requires a stable 32-byte audit signing key from a secret manager');
+  if (cloudMode && cloudAuditKeyRing === null &&
+      (typeof cloudAuditKey !== 'string' || Buffer.byteLength(cloudAuditKey) < 32)) {
+    throw new TypeError('Cloud mode requires a stable 32-byte audit signing key or versioned key ring');
+  }
+  if (cloudMode && cloudAuditKeyRing !== null && cloudAuditKey !== null) {
+    throw new TypeError('Configure cloudAuditKey or cloudAuditKeyRing, not both');
   }
   const maxStorageBytesPerTenant = positiveCloudLimit(
     cloudLimits.maxStorageBytesPerTenant, 5 * 1024 * 1024 * 1024, 'maxStorageBytesPerTenant');
@@ -254,7 +259,9 @@ export function createStudioServer({
     throw new TypeError('cloudAuditArchive must be a trusted append-only archive function');
   }
   const cloudAuth = cloudMode ? createCloudAuth({ tokens: cloudTokens, limits: cloudLimits }) : null;
-  const store = new StudioJobStore(outputRoot, { auditKey: cloudMode ? cloudAuditKey : null });
+  const store = new StudioJobStore(outputRoot, cloudMode
+    ? (cloudAuditKeyRing ? { auditKeyRing: cloudAuditKeyRing } : { auditKey: cloudAuditKey })
+    : {});
   if (cloudMode) {
     store.pruneCloudSubmissions(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
   }
@@ -393,6 +400,11 @@ export function createStudioServer({
       return { archived: batch.events.length, ...checkpoint };
     },
     checkpoint: () => store.cloudAuditArchiveBatch(1),
+    rotateSigningKey: ({ keyId, key, actorId } = {}) => {
+      if (!cloudMode) throw new Error('Audit key administration is available only in cloud mode');
+      return store.rotateAuditSigningKey({ keyId, key, actorId: operatorId(actorId) });
+    },
+    keyMetadata: () => store.auditKeyRingMetadata(),
   }) : null;
 
   function cloudRequestAllowed(req) {
