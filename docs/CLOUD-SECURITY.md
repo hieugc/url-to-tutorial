@@ -71,6 +71,36 @@ const studio = createStudioServer({
 - The HMAC chain detects event modification, insertion and reordering while the signing key remains secret. A database rollback to an older internally consistent snapshot is not detectable without an external checkpoint or append-only archive.
 - Audit events still have no retention/archival policy, external append-only sink, external checkpoint, key-rotation procedure or operator audit UI. Disk/database failure can prevent audit writes; production readiness requires monitored storage and explicit retention/export controls.
 
+## Tenant usage metering and budgets
+
+- Cloud API exposes `GET /api/usage` only after bearer authentication and project ACL validation. The response is scoped to the authenticated tenant and the current UTC calendar month; it never includes another tenant's usage.
+- Monthly job admission is transactionally counted against both finalized usage rows and active admission reservations. Concurrent requests cannot race past `maxJobsPerMonth`.
+- Each job reserves `maxOutputBytesPerJob` against `maxStorageBytesPerTenant` in the same SQLite transaction as job admission and the signed audit event. Admission fails with HTTP 429 when used plus reserved storage would exceed the tenant budget.
+- The isolated worker receives the per-job byte ceiling. The Docker adapter checks output size periodically and terminates the worker when the limit is crossed; the API independently measures the completed output and removes output that exceeded the reservation.
+- On completion, failure, cancellation or startup recovery, the API records worker wall time, artifact bytes, job type, outcome and an estimated cost in SQLite. Storage usage is held per retained job and released when that job's artifacts are deleted by retention.
+- Monthly usage events outlive artifact retention so monthly job/worker/cost totals remain available after videos and reports are pruned. The API response labels the cost as `estimateOnly`; configured rates are operator estimates, not invoices, tax calculations, payment collection or a billing ledger.
+- Defaults: 1,000 jobs per tenant/month, 5 GiB retained storage per tenant and 1 GiB maximum output per job. These are conservative software defaults, not a production capacity guarantee. Configure lower/higher values only after host disk quotas, backup and retention behavior are independently reviewed.
+- Default illustrative rates are 20 micro-USD per worker second and 10 micro-USD per MiB of output. Operators must configure rates from measured infrastructure costs before using the estimate for customer communication.
+- Storage reservations protect concurrent admission, but the Docker output monitor is periodic rather than a kernel filesystem quota. A fast writer may temporarily exceed its ceiling between scans; use a dedicated filesystem/project quota or container storage limit before production.
+
+Example configuration:
+
+```js
+createStudioServer({
+  cloudMode: true,
+  cloudLimits: {
+    maxJobsPerMonth: 1000,
+    maxStorageBytesPerTenant: 5 * 1024 * 1024 * 1024,
+    maxOutputBytesPerJob: 1024 * 1024 * 1024,
+  },
+  cloudPricing: {
+    workerCostPerSecondMicros: 20,
+    artifactCostPerMiBMicros: 10,
+  },
+  // tokens, audit key, trusted proxy and isolated worker are also required
+});
+```
+
 ## Disposable worker and outbound egress boundary
 
 ### Per-job network topology
@@ -146,7 +176,7 @@ No public cloud startup command or deployment is included in this PR. The defaul
 - Deploy and independently verify the TLS reverse proxy, Host allowlist and trusted forwarding-header behavior.
 - Add a secret-manager integration, authenticated operator workflow, multi-replica credential distribution, tenant/project administration and break-glass procedures.
 - Add audit retention/archival, an external append-only sink and independently stored checkpoints, a safe signing-key rotation procedure, and operational monitoring for SQLite disk/database failures.
-- Add billing/cost accounting, per-tenant storage budgets, artifact encryption and a tested retention/deletion process.
+- Add real billing/payment integration only if commercial charging is required; replace estimate-only rates with measured infrastructure costs and finance-reviewed pricing. Add artifact encryption and a tested retention/deletion process.
 - Add an OS-level host firewall policy for the proxy, independent review of Docker bridge rules, and red-team tests for DNS rebinding, redirects, nested subresources, metadata endpoints, tenant enumeration, parallel abuse and cancellation races.
 - Add a cleanup/reconciliation service for orphaned per-job networks after a hard API-host or Docker-daemon failure. Worker process timeout bounds execution, but does not itself remove a network left behind by a host crash.
 - Validate the complete deployment on the intended host, including Docker daemon access controls, disk pressure, proxy health, restart recovery and independent security acceptance.
