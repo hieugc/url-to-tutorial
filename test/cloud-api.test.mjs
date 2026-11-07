@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -583,6 +583,78 @@ test('Cloud audit HMAC chain migrates legacy rows, verifies across restart and d
   assert.throws(() => new StudioJobStore(root, {
     auditKey: 'wrong-audit-signing-key-0123456789abcdef',
   }), /integrity verification failed/);
+});
+
+test('Versioned audit key ring migrates legacy HMAC rows before rotating and preserves archived prefixes', async t => {
+  const root = await temp();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const oldKey = 'legacy-audit-key-material-for-migration-0123456789';
+  const nextKey = 'next-audit-key-material-for-rotation-0123456789';
+  const oldKeyId = createHash('sha256').update(oldKey).digest('hex').slice(0, 16);
+  const nextKeyId = createHash('sha256').update(nextKey).digest('hex').slice(0, 16);
+  const legacy = new StudioJobStore(root);
+  legacy.db.exec('DROP TABLE cloud_audit_events');
+  legacy.db.exec('CREATE TABLE cloud_audit_events (' +
+    'event_id TEXT PRIMARY KEY, sequence INTEGER, previous_hash TEXT, event_hash TEXT, ' +
+    'tenant_id TEXT NOT NULL, project_id TEXT, principal_id TEXT, action TEXT NOT NULL, ' +
+    'resource_id TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT)');
+  legacy.db.exec('CREATE INDEX cloud_audit_events_tenant_time ON cloud_audit_events(tenant_id, created_at)');
+  const event = {
+    eventId: 'legacy-signed-event-1', tenantId: 'tenant-a', projectId: 'project-a',
+    principalId: 'operator', action: 'job.submitted', resourceId: 'job-1',
+    outcome: 'success', createdAt: '2026-11-06T12:00:00.000Z',
+    details: JSON.stringify({ jobType: 'discover' }),
+  };
+  const previousHash = '0'.repeat(64);
+  const payload = JSON.stringify([
+    event.eventId, event.tenantId, event.projectId, event.principalId,
+    event.action, event.resourceId, event.outcome, event.createdAt, event.details,
+  ]);
+  const legacyHash = createHmac('sha256', oldKey)
+    .update('1\\n' + previousHash + '\\n' + payload, 'utf8').digest('hex');
+  legacy.db.prepare(
+    'INSERT INTO cloud_audit_events (event_id, sequence, previous_hash, event_hash, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details) ' +
+    'VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(event.eventId, previousHash, legacyHash, event.tenantId, event.projectId,
+    event.principalId, event.action, event.resourceId, event.outcome, event.createdAt, event.details);
+  legacy.db.prepare('UPDATE cloud_audit_state SET last_sequence=1, last_hash=? WHERE id=1')
+    .run(legacyHash);
+  legacy.close();
+
+  const keys = { [oldKeyId]: oldKey, [nextKeyId]: nextKey };
+  assert.throws(() => new StudioJobStore(root, {
+    auditKeyRing: { activeKeyId: nextKeyId, keys },
+  }), /legacy event signature mismatch/, 'Legacy migration must start with the legacy signer active');
+
+  const migrated = new StudioJobStore(root, {
+    auditKeyRing: { activeKeyId: oldKeyId, keys },
+  });
+  assert.equal(migrated.verifyCloudAuditChain().valid, true);
+  assert.equal(migrated.cloudAuditEvents('tenant-a')[0].keyId, oldKeyId);
+
+  const firstBatch = migrated.cloudAuditArchiveBatch(10);
+  assert.equal(firstBatch.events.length, 1);
+  migrated.commitCloudAuditArchiveCheckpoint({
+    expectedPreviousSequence: firstBatch.previousSequence,
+    throughSequence: firstBatch.throughSequence,
+    throughHash: firstBatch.throughHash,
+  });
+
+  migrated.rotateAuditSigningKey({ keyId: nextKeyId, key: nextKey, actorId: 'security-operator' });
+  migrated.recordCloudAudit({ tenantId: 'tenant-a', action: 'test.after_key_rotation' });
+  assert.equal(migrated.verifyCloudAuditChain().valid, true);
+  const nextBatch = migrated.cloudAuditArchiveBatch(10);
+  assert.equal(nextBatch.previousSequence, 1, 'Rotation must not rewrite an externally archived prefix');
+  assert.ok(nextBatch.events.every(row => row.keyId === nextKeyId));
+  migrated.close();
+
+  const restored = new StudioJobStore(root, {
+    auditKeyRing: { activeKeyId: nextKeyId, keys },
+  });
+  assert.equal(restored.verifyCloudAuditChain().valid, true);
+  assert.deepEqual(restored.cloudAuditEvents('tenant-a').map(row => row.keyId),
+    [oldKeyId, nextKeyId]);
+  restored.close();
 });
 
 test('Cloud mode refuses to start without a stable audit signing secret', async t => {
