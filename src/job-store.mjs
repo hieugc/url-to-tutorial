@@ -167,7 +167,7 @@ export class StudioJobStore {
         !Number.isSafeInteger(workerMs) || workerMs < 0 ||
         !Number.isSafeInteger(artifactBytes) || artifactBytes < 0 ||
         !Number.isSafeInteger(costMicros) || costMicros < 0 ||
-        typeof period !== 'string' || !/^\\d{4}-\\d{2}$/.test(period)) {
+        typeof period !== 'string' || !/^\d{4}-\d{2}$/.test(period)) {
       throw new TypeError('Invalid cloud usage finalization');
     }
     const now = new Date().toISOString();
