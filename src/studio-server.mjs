@@ -174,6 +174,9 @@ export function createStudioServer({
   if (cloudMode && cloudTrustedProxy !== true) {
     throw new TypeError('Cloud mode requires an explicitly trusted TLS-terminating reverse proxy');
   }
+  if (cloudMode && !Number.isInteger(fsConstants.O_NOFOLLOW)) {
+    throw new TypeError('Cloud mode requires filesystem O_NOFOLLOW support for tenant artifact isolation');
+  }
   if (cloudMode && typeof cloudWorker !== 'function') {
     throw new TypeError('Cloud mode requires an isolated-worker adapter; local browser execution is disabled');
   }
