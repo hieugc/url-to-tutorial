@@ -219,6 +219,7 @@ export function createStudioServer({
   cloudAuditKey = null,
   cloudPreflight = publicUrlPreflight,
   cloudPricing = {},
+  cloudAuditArchive = null,
 } = {}) {
   const allowedCloudHosts = new Set(cloudAllowedHosts.map(host => String(host).trim().toLowerCase()));
   if (cloudMode && (!allowedCloudHosts.size ||
@@ -249,6 +250,9 @@ export function createStudioServer({
     cloudPricing.workerCostPerSecondMicros, 20, 'workerCostPerSecondMicros');
   const artifactCostPerMiBMicros = nonNegativeCloudRate(
     cloudPricing.artifactCostPerMiBMicros, 10, 'artifactCostPerMiBMicros');
+  if (cloudAuditArchive !== null && typeof cloudAuditArchive !== 'function') {
+    throw new TypeError('cloudAuditArchive must be a trusted append-only archive function');
+  }
   const cloudAuth = cloudMode ? createCloudAuth({ tokens: cloudTokens, limits: cloudLimits }) : null;
   const store = new StudioJobStore(outputRoot, { auditKey: cloudMode ? cloudAuditKey : null });
   if (cloudMode) {
@@ -365,6 +369,30 @@ export function createStudioServer({
     replace: replaceCloudTokens,
     revokeToken: revokeCloudToken,
     revokePrincipal: revokeCloudPrincipal,
+  }) : null;
+  const auditAdmin = cloudMode ? Object.freeze({
+    archiveBatch: async ({ limit = 500 } = {}) => {
+      if (typeof cloudAuditArchive !== 'function') {
+        throw new Error('External append-only audit archive is not configured');
+      }
+      const batch = store.cloudAuditArchiveBatch(limit);
+      if (batch.events.length === 0) {
+        return { archived: 0, lastArchivedSequence: batch.previousSequence,
+          lastArchivedHash: batch.previousHash };
+      }
+      const acknowledgement = await cloudAuditArchive(batch);
+      const last = batch.events.at(-1);
+      if (!acknowledgement || acknowledgement.throughSequence !== last.sequence ||
+          acknowledgement.throughHash !== last.eventHash) {
+        throw new Error('External audit archive did not acknowledge the exact batch checkpoint');
+      }
+      const checkpoint = store.commitCloudAuditArchiveCheckpoint({
+        expectedPreviousSequence: batch.previousSequence,
+        throughSequence: last.sequence, throughHash: last.eventHash,
+      });
+      return { archived: batch.events.length, ...checkpoint };
+    },
+    checkpoint: () => store.cloudAuditArchiveBatch(1),
   }) : null;
 
   function cloudRequestAllowed(req) {
@@ -904,7 +932,7 @@ export function createStudioServer({
     // their terminal state. A hard process kill is recovered as interrupted.
     queue.finally(() => store.close());
   });
-  return { server, jobs, store, tokenAdmin };
+  return { server, jobs, store, tokenAdmin, auditAdmin };
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
