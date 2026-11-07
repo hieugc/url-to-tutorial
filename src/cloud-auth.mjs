@@ -32,7 +32,7 @@ export function createCloudAuth({ tokens, limits = {}, clock = Date.now } = {}) 
 
   const principals = new Map();
   for (const entry of tokens) {
-    if (!entry || typeof entry !== 'object' || !TOKEN.test(entry.token || '') ||
+    if (!entry || typeof entry !== 'object' || typeof entry.token !== 'string' || !TOKEN.test(entry.token) ||
         !ID.test(entry.tenantId || '') || !Array.isArray(entry.projectIds) ||
         entry.projectIds.length === 0 ||
         !entry.projectIds.every(id => typeof id === 'string' && ID.test(id)) ||
