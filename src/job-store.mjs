@@ -335,12 +335,14 @@ export class StudioJobStore {
   }
 
   legacyAuditEventHash(sequence, previousHash, event) {
-    if (!this.legacyAuditKey) throw new Error('Legacy audit key is required to verify pre-key-ID events');
+    // The active ring key must be the legacy signer during a pre-key-ID migration.
+    const key = this.legacyAuditKey || this.auditKeys.get(this.activeAuditKeyId);
+    if (!key) throw new Error('Legacy audit key is required to verify pre-key-ID events');
     const payload = JSON.stringify([
       event.eventId, event.tenantId, event.projectId, event.principalId,
       event.action, event.resourceId, event.outcome, event.createdAt, event.details,
     ]);
-    return createHmac('sha256', this.legacyAuditKey)
+    return createHmac('sha256', key)
       .update(String(sequence) + '\\n' + previousHash + '\\n' + payload, 'utf8')
       .digest('hex');
   }
