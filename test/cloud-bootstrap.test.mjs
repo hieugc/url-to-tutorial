@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -71,6 +72,10 @@ test('Cloud bootstrap reads versioned secrets and forces cloud credentials into 
   });
 
   assert.equal(calls.length, 1);
+  assert.deepEqual(Object.keys(bootstrap).sort(), ['reloadTokens', 'server', 'status']);
+  assert.equal(Object.hasOwn(bootstrap, 'studio'), false);
+  assert.equal(Object.hasOwn(bootstrap, 'tokenAdmin'), false);
+  assert.equal(Object.hasOwn(bootstrap, 'auditAdmin'), false);
   assert.equal(calls[0].cloudMode, true);
   assert.deepEqual(calls[0].cloudTokens, secrets.tokens);
   assert.equal(calls[0].cloudAuditKey, null);
@@ -216,7 +221,7 @@ test('Token reload refuses to change audit keys outside the staged rotation work
   assert.equal(bootstrap.status().secretVersion, '1');
 });
 
-test('Cloud bootstrap integrates with the real Studio factory and records MFA token reload', async t => {
+test('Cloud bootstrap integrates with the real Studio factory without exposing admin capabilities', async t => {
   const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'url-tutorial-cloud-bootstrap-'));
   t.after(() => rm(outputRoot, { recursive: true, force: true }));
   let current = snapshot('1');
@@ -237,12 +242,31 @@ test('Cloud bootstrap integrates with the real Studio factory and records MFA to
     current = snapshot('2', tokenB);
     const status = await cloud.reloadTokens({ session: 'mfa-verified' });
     assert.equal(status.secretVersion, '2');
-    const audit = cloud.studio.store.cloudAuditEvents('tenant-a');
-    assert.ok(audit.some(event =>
-      event.action === 'auth.tokens_replaced' && event.principalId === 'security-operator'));
-    assert.equal(JSON.stringify(audit).includes(tokenB), false);
+
+    // The wrapper must not expose the raw Studio object, tokenAdmin, auditAdmin
+    // or the SQLite store. Verify the audit trail through the persisted database.
+    assert.equal(Object.hasOwn(cloud, 'studio'), false);
+    assert.equal(Object.hasOwn(cloud, 'tokenAdmin'), false);
+    assert.equal(Object.hasOwn(cloud, 'auditAdmin'), false);
+    await new Promise(resolve => cloud.server.listen(0, '127.0.0.1', resolve));
+    await new Promise((resolve, reject) => cloud.server.close(error => error ? reject(error) : resolve()));
+    await new Promise(resolve => setImmediate(resolve));
+
+    const db = new DatabaseSync(path.join(outputRoot, 'studio-jobs.sqlite'));
+    try {
+      const audit = db.prepare(
+        'SELECT action, principal_id AS principalId FROM cloud_audit_events WHERE tenant_id=? ORDER BY sequence',
+      ).all('tenant-a');
+      assert.ok(audit.some(event =>
+        event.action === 'auth.tokens_replaced' && event.principalId === 'security-operator'));
+      assert.equal(JSON.stringify(audit).includes(tokenB), false);
+    } finally {
+      db.close();
+    }
   } finally {
-    cloud.studio.store.close();
+    if (cloud.server.listening) {
+      await new Promise(resolve => cloud.server.close(resolve));
+    }
   }
 });
 
