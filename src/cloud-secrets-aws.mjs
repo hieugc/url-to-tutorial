@@ -33,16 +33,21 @@ function decodeSecretValue(response) {
   }
 
   let raw;
+  let size;
   if (hasString) {
     raw = response.SecretString;
+    size = Buffer.byteLength(raw, 'utf8');
   } else if (Buffer.isBuffer(response.SecretBinary) ||
       response.SecretBinary instanceof Uint8Array ||
       response.SecretBinary instanceof ArrayBuffer) {
+    size = response.SecretBinary.byteLength;
+    if (size < 1 || size > MAX_SECRET_BYTES) {
+      throw new Error('AWS cloud secret bundle must be between 1 byte and 64 KiB');
+    }
     raw = Buffer.from(response.SecretBinary).toString('utf8');
   } else {
     throw new Error('AWS Secrets Manager returned an unsupported binary value');
   }
-  const size = Buffer.byteLength(raw, 'utf8');
   if (size < 1 || size > MAX_SECRET_BYTES) {
     throw new Error('AWS cloud secret bundle must be between 1 byte and 64 KiB');
   }
