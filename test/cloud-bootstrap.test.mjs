@@ -325,6 +325,28 @@ test('Token reload leaves the active registry unchanged when its audit append fa
   }
 });
 
+test('Cloud bootstrap redacts secret-manager and operator-authenticator failures', async () => {
+  await assert.rejects(createCloudStudioFromSecretManager({
+    secretManager: {
+      readCloudSecrets: async () => { throw new Error('provider leaked ' + tokenA); },
+    },
+    createStudioServerImpl: fakeFactory(),
+  }), error => error.message === 'Cloud secret manager read failed' &&
+    !error.message.includes(tokenA));
+
+  const bootstrap = await createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => snapshot('1') },
+    operatorAuthenticator: {
+      authorize: async () => { throw new Error('operator adapter leaked ' + tokenA); },
+    },
+    createStudioServerImpl: fakeFactory(),
+  });
+  await assert.rejects(bootstrap.reloadTokens({}), error =>
+    error.message === 'Cloud secret reload operator authorization failed' &&
+    !error.message.includes(tokenA));
+  assert.equal(bootstrap.status().secretVersion, '1');
+});
+
 test('Cloud bootstrap fails closed when the secret manager is missing or returns invalid data', async () => {
   await assert.rejects(createCloudStudioFromSecretManager({}), /readCloudSecrets/);
   let factoryCalls = 0;
