@@ -737,8 +737,12 @@ test('Cloud audit archive refuses missing or mismatched external acknowledgement
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
   });
-  const request = await call(origin, '/api/jobs', { token: tokenA, projectId: 'project-a' });
-  assert.equal(request.status, 200);
+  const request = await call(origin, '/api/discover', {
+    method: 'POST', token: tokenA, projectId: 'project-a',
+    body: { url: 'https://example.com', language: 'en', maxPages: 1 },
+  });
+  assert.equal(request.status, 202);
+  assert.equal((await waitForJob(origin, request.data.jobId, tokenA, 'project-a')).data.status, 'completed');
   await assert.rejects(studio.auditAdmin.archiveBatch(), /did not acknowledge the exact batch checkpoint/);
   assert.equal(studio.store.cloudAuditArchiveBatch(500).previousSequence, 0);
 });
