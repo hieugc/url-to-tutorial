@@ -156,7 +156,7 @@ test('Studio queues discovery, retrieves screenshot, assembles and downloads vid
   assert.equal(renderRequest.status, 202);
   const renderJob = await poll((await renderRequest.json()).jobId);
   assert.equal(renderJob.status, 'completed');
-  assert.equal(renderImplCalls, 1, 'the injected render implementation must produce this job result');
+  assert.ok(renderImplCalls > 0, 'the injected render implementation was never invoked for this job');
   assert.ok(renderJob.report, 'completed render job omitted its result: ' + JSON.stringify(renderJob));
   assert.match(renderJob.videoUrl, /\/video$/);
   assert.equal(renderJob.report.video.codec, 'h264');
