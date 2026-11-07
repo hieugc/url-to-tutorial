@@ -213,8 +213,9 @@ test('Cloud API rate-limits per tenant and emits Retry-After', async t => {
     cloudLimits: { maxRequestsPerMinute: 2 },
   }));
   const origin = await listen(studio.server);
+  let activeServer = studio.server;
   t.after(async () => {
-    await new Promise(resolve => studio.server.close(resolve));
+    if (activeServer.listening) await new Promise(resolve => activeServer.close(resolve));
     await rm(root, { recursive: true, force: true });
   });
 
@@ -231,10 +232,7 @@ test('Cloud API rate-limits per tenant and emits Retry-After', async t => {
     cloudLimits: { maxRequestsPerMinute: 2 },
   }));
   const restartedOrigin = await listen(restarted.server);
-  t.after(async () => {
-    await new Promise(resolve => restarted.server.close(resolve));
-    await rm(root, { recursive: true, force: true });
-  });
+  activeServer = restarted.server;
   const stillLimited = await call(restartedOrigin, '/api/jobs', {
     token: tokenA, projectId: 'project-a',
   });
