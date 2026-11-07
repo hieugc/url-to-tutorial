@@ -32,6 +32,22 @@ export class StudioJobStore {
       'event_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, created_at_ms INTEGER NOT NULL)');
     this.db.exec('CREATE INDEX IF NOT EXISTS cloud_request_events_tenant_time ' +
       'ON cloud_request_events(tenant_id, created_at_ms)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS cloud_usage_events (' +
+      'job_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT NOT NULL, ' +
+      'period TEXT NOT NULL, job_type TEXT NOT NULL, outcome TEXT NOT NULL, ' +
+      'worker_ms INTEGER NOT NULL, artifact_bytes INTEGER NOT NULL, cost_micros INTEGER NOT NULL, ' +
+      'created_at TEXT NOT NULL, finalized_at TEXT NOT NULL)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS cloud_usage_events_tenant_period ' +
+      'ON cloud_usage_events(tenant_id, period)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS cloud_storage_usage (' +
+      'job_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT NOT NULL, ' +
+      'bytes INTEGER NOT NULL, updated_at TEXT NOT NULL)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS cloud_storage_usage_tenant ' +
+      'ON cloud_storage_usage(tenant_id)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS cloud_storage_reservations (' +
+      'job_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, reserved_bytes INTEGER NOT NULL, created_at TEXT NOT NULL)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS cloud_storage_reservations_tenant ' +
+      'ON cloud_storage_reservations(tenant_id)');
     this.db.exec('CREATE TABLE IF NOT EXISTS cloud_audit_events (' +
       'event_id TEXT PRIMARY KEY, sequence INTEGER, previous_hash TEXT, event_hash TEXT, ' +
       'tenant_id TEXT NOT NULL, project_id TEXT, principal_id TEXT, action TEXT NOT NULL, ' +
@@ -62,6 +78,31 @@ export class StudioJobStore {
       'WHERE tenant_id=? AND created_at_ms>=?');
     this.insertCloudRequestStatement = this.db.prepare(
       'INSERT INTO cloud_request_events (event_id, tenant_id, created_at_ms) VALUES (?, ?, ?)');
+    this.reserveCloudStorageStatement = this.db.prepare(
+      'INSERT INTO cloud_storage_reservations (job_id, tenant_id, reserved_bytes, created_at) VALUES (?, ?, ?, ?)');
+    this.storageTotalsStatement = this.db.prepare(
+      'SELECT COALESCE((SELECT SUM(bytes) FROM cloud_storage_usage WHERE tenant_id=?), 0) AS used, ' +
+      'COALESCE((SELECT SUM(reserved_bytes) FROM cloud_storage_reservations WHERE tenant_id=?), 0) AS reserved');
+    this.monthlyUsageStatement = this.db.prepare(
+      'SELECT COUNT(*) AS jobs, COALESCE(SUM(worker_ms), 0) AS workerMs, ' +
+      'COALESCE(SUM(artifact_bytes), 0) AS artifactBytes, COALESCE(SUM(cost_micros), 0) AS costMicros ' +
+      'FROM cloud_usage_events WHERE tenant_id=? AND period=?');
+    this.monthlyReservationsStatement = this.db.prepare(
+      'SELECT COUNT(*) AS count FROM cloud_storage_reservations WHERE tenant_id=?');
+    this.hasCloudUsageStatement = this.db.prepare(
+      'SELECT 1 AS present FROM cloud_usage_events WHERE job_id=?');
+    this.insertCloudUsageStatement = this.db.prepare(
+      'INSERT INTO cloud_usage_events (job_id, tenant_id, project_id, period, job_type, outcome, worker_ms, artifact_bytes, cost_micros, created_at, finalized_at) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET ' +
+      'outcome=excluded.outcome, worker_ms=excluded.worker_ms, artifact_bytes=excluded.artifact_bytes, ' +
+      'cost_micros=excluded.cost_micros, finalized_at=excluded.finalized_at');
+    this.insertCloudStorageStatement = this.db.prepare(
+      'INSERT INTO cloud_storage_usage (job_id, tenant_id, project_id, bytes, updated_at) VALUES (?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(job_id) DO UPDATE SET bytes=excluded.bytes, updated_at=excluded.updated_at');
+    this.deleteCloudStorageReservationStatement = this.db.prepare(
+      'DELETE FROM cloud_storage_reservations WHERE job_id=?');
+    this.deleteCloudStorageUsageStatement = this.db.prepare(
+      'DELETE FROM cloud_storage_usage WHERE job_id=?');
     this.insertCloudAuditStatement = this.db.prepare(
       'INSERT INTO cloud_audit_events (event_id, sequence, previous_hash, event_hash, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details) ' +
       'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
@@ -105,7 +146,75 @@ export class StudioJobStore {
     this.put.run(snapshot.id, snapshot.createdAt || now, now, JSON.stringify(snapshot));
   }
 
-  saveCloudSubmission(job, auditEvent = null) {
+  reserveCloudStorage(jobId, tenantId, bytes, budgetBytes, createdAt) {
+    if (!Number.isSafeInteger(bytes) || bytes < 0 ||
+        !Number.isSafeInteger(budgetBytes) || budgetBytes < 1) {
+      throw new TypeError('Invalid cloud storage reservation');
+    }
+    const totals = this.storageTotalsStatement.get(tenantId, tenantId);
+    const used = Number(totals.used || 0);
+    const reserved = Number(totals.reserved || 0);
+    if (used + reserved + bytes > budgetBytes) {
+      const error = new Error('Tenant storage budget exceeded');
+      error.code = 'CLOUD_STORAGE_BUDGET';
+      throw error;
+    }
+    this.reserveCloudStorageStatement.run(jobId, tenantId, bytes, createdAt);
+  }
+
+  finalizeCloudUsage(job, { workerMs, artifactBytes, costMicros = 0, period, outcome } = {}, auditEvent = null) {
+    if (!job?.id || !job.tenantId || !job.projectId ||
+        !Number.isSafeInteger(workerMs) || workerMs < 0 ||
+        !Number.isSafeInteger(artifactBytes) || artifactBytes < 0 ||
+        !Number.isSafeInteger(costMicros) || costMicros < 0 ||
+        typeof period !== 'string' || !/^\d{4}-\d{2}$/.test(period)) {
+      throw new TypeError('Invalid cloud usage finalization');
+    }
+    const now = new Date().toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.deleteCloudStorageReservationStatement.run(job.id);
+      this.insertCloudStorageStatement.run(job.id, job.tenantId, job.projectId, artifactBytes, now);
+      this.insertCloudUsageStatement.run(
+        job.id, job.tenantId, job.projectId, period, job.type, outcome || job.status,
+        workerMs, artifactBytes, costMicros, job.createdAt, now,
+      );
+      if (auditEvent) this.insertCloudAudit(auditEvent);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  hasCloudUsage(jobId) {
+    return Boolean(this.hasCloudUsageStatement.get(jobId));
+  }
+
+  cloudUsage(tenantId, period) {
+    const usage = this.monthlyUsageStatement.get(tenantId, period);
+    const storage = this.storageTotalsStatement.get(tenantId, tenantId);
+    return {
+      period, jobs: Number(usage.jobs || 0), workerMs: Number(usage.workerMs || 0),
+      artifactBytes: Number(usage.artifactBytes || 0), costMicros: Number(usage.costMicros || 0),
+      storageBytes: Number(storage.used || 0), reservedStorageBytes: Number(storage.reserved || 0),
+    };
+  }
+
+  deleteCloudUsage(jobId) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.deleteCloudStorageReservationStatement.run(jobId);
+      this.deleteCloudStorageUsageStatement.run(jobId);
+      // Monthly usage events are financial/accounting records and outlive job artifacts.
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  saveCloudSubmission(job, auditEvent = null, storage = null) {
     if (!job?.tenantId || !job?.projectId || !job?.id || !job?.createdAt) {
       throw new TypeError('Cloud submission requires job, tenant and project identity');
     }
@@ -117,6 +226,17 @@ export class StudioJobStore {
     try {
       this.put.run(snapshot.id, snapshot.createdAt, now, JSON.stringify(snapshot));
       this.recordCloudSubmission.run(snapshot.id, snapshot.tenantId, snapshot.projectId, snapshot.createdAt);
+      if (storage?.maxJobsPerMonth && storage?.period) {
+        const usage = this.monthlyUsageStatement.get(snapshot.tenantId, storage.period);
+        const reservations = this.monthlyReservationsStatement.get(snapshot.tenantId);
+        if (Number(usage.jobs || 0) + Number(reservations.count || 0) >= storage.maxJobsPerMonth) {
+          const error = new Error('Tenant monthly job budget exceeded');
+          error.code = 'CLOUD_MONTHLY_JOB_BUDGET';
+          throw error;
+        }
+      }
+      if (storage) this.reserveCloudStorage(snapshot.id, snapshot.tenantId,
+        storage.reservationBytes, storage.budgetBytes, snapshot.createdAt);
       if (auditEvent) this.insertCloudAudit(auditEvent);
       this.db.exec('COMMIT');
     } catch (error) {
@@ -319,6 +439,7 @@ export class StudioJobStore {
 
   delete(id) {
     this.deleteStatement.run(id);
+    this.deleteCloudUsage(id);
   }
 
   expired(now = Date.now()) {

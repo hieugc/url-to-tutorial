@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
-import { constants as fsConstants, rmSync } from 'node:fs';
-import { mkdir, readFile, lstat, open } from 'node:fs/promises';
+import { constants as fsConstants, rmSync, readdirSync, lstatSync } from 'node:fs';
+import { mkdir, readFile, lstat, open, readdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -142,6 +142,54 @@ async function readJobJson(outputRoot, jobId, filename, maxBytes = 2 * 1024 * 10
   } finally { await handle.close(); }
 }
 
+function directoryBytesSync(root) {
+  const pending = [root];
+  let total = 0;
+  while (pending.length) {
+    const directory = pending.pop();
+    let entries;
+    try { entries = readdirSync(directory); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    for (const name of entries) {
+      const file = path.join(directory, name);
+      const info = lstatSync(file);
+      if (info.isDirectory() && !info.isSymbolicLink()) pending.push(file);
+      else total += info.size;
+    }
+  }
+  return total;
+}
+
+async function directoryBytes(root) {
+  const pending = [root];
+  let total = 0;
+  while (pending.length) {
+    const directory = pending.pop();
+    let entries;
+    try { entries = await readdir(directory); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    for (const name of entries) {
+      const file = path.join(directory, name);
+      const info = await lstat(file);
+      if (info.isDirectory() && !info.isSymbolicLink()) pending.push(file);
+      else total += info.size;
+    }
+  }
+  return total;
+}
+
+function positiveCloudLimit(value, fallback, name) {
+  const result = value ?? fallback;
+  if (!Number.isSafeInteger(result) || result < 1) throw new TypeError(name + ' must be a positive safe integer');
+  return result;
+}
+
+function nonNegativeCloudRate(value, fallback, name) {
+  const result = value ?? fallback;
+  if (!Number.isSafeInteger(result) || result < 0) throw new TypeError(name + ' must be a non-negative safe integer');
+  return result;
+}
+
 function streamJobArtifact(res, opened, headers) {
   res.writeHead(200, headers);
   const stream = opened.handle.createReadStream();
@@ -170,6 +218,7 @@ export function createStudioServer({
   cloudWorker = null,
   cloudAuditKey = null,
   cloudPreflight = publicUrlPreflight,
+  cloudPricing = {},
 } = {}) {
   const allowedCloudHosts = new Set(cloudAllowedHosts.map(host => String(host).trim().toLowerCase()));
   if (cloudMode && (!allowedCloudHosts.size ||
@@ -188,12 +237,42 @@ export function createStudioServer({
   if (cloudMode && (typeof cloudAuditKey !== 'string' || Buffer.byteLength(cloudAuditKey) < 32)) {
     throw new TypeError('Cloud mode requires a stable 32-byte audit signing key from a secret manager');
   }
+  const maxStorageBytesPerTenant = positiveCloudLimit(
+    cloudLimits.maxStorageBytesPerTenant, 5 * 1024 * 1024 * 1024, 'maxStorageBytesPerTenant');
+  const maxOutputBytesPerJob = positiveCloudLimit(
+    cloudLimits.maxOutputBytesPerJob, 1024 * 1024 * 1024, 'maxOutputBytesPerJob');
+  if (maxOutputBytesPerJob > maxStorageBytesPerTenant) {
+    throw new TypeError('maxOutputBytesPerJob cannot exceed maxStorageBytesPerTenant');
+  }
+  const maxJobsPerMonth = positiveCloudLimit(cloudLimits.maxJobsPerMonth, 1000, 'maxJobsPerMonth');
+  const workerCostPerSecondMicros = nonNegativeCloudRate(
+    cloudPricing.workerCostPerSecondMicros, 20, 'workerCostPerSecondMicros');
+  const artifactCostPerMiBMicros = nonNegativeCloudRate(
+    cloudPricing.artifactCostPerMiBMicros, 10, 'artifactCostPerMiBMicros');
   const cloudAuth = cloudMode ? createCloudAuth({ tokens: cloudTokens, limits: cloudLimits }) : null;
   const store = new StudioJobStore(outputRoot, { auditKey: cloudMode ? cloudAuditKey : null });
   if (cloudMode) {
     store.pruneCloudSubmissions(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
   }
-  const jobs = new Map(store.recover().map(job => [job.id, job]));
+  const recoveredJobs = store.recover();
+  const jobs = new Map(recoveredJobs.map(job => [job.id, job]));
+  if (cloudMode) {
+    for (const job of recoveredJobs) {
+      if (!job.tenantId || !job.projectId || store.hasCloudUsage(job.id)) continue;
+      const artifactBytes = directoryBytesSync(job.outputDir);
+      const workerMs = job.startedAt
+        ? Math.max(0, Date.parse(job.finishedAt || new Date().toISOString()) - Date.parse(job.startedAt))
+        : 0;
+      const period = new Date(job.createdAt).toISOString().slice(0, 7);
+      const costMicros =
+        Math.ceil(workerMs / 1000) * workerCostPerSecondMicros +
+        Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
+      store.finalizeCloudUsage(job, { workerMs, artifactBytes, costMicros, period, outcome: 'interrupted' }, {
+        tenantId: job.tenantId, projectId: job.projectId, action: 'job.interrupted_recovered',
+        resourceId: job.id, outcome: 'failed', details: { workerMs, artifactBytes, costMicros },
+      });
+    }
+  }
   function pruneHistory() {
     const expiredIds = store.expired().map(job => job.id);
     for (const id of expiredIds) store.delete(id);
@@ -352,11 +431,28 @@ export function createStudioServer({
       idempotencyKey: key, requestHash, cancelRequested: false,
       abortController: new AbortController() };
     if (cloudMode) {
-      store.saveCloudSubmission(job, {
-        tenantId: principal.tenantId, projectId: principal.projectId,
-        principalId: principal.principalId, action: auditAction,
-        resourceId: id, details: { jobType: type },
-      });
+      const period = new Date(job.createdAt).toISOString().slice(0, 7);
+      try {
+        store.saveCloudSubmission(job, {
+          tenantId: principal.tenantId, projectId: principal.projectId,
+          principalId: principal.principalId, action: auditAction,
+          resourceId: id, details: { jobType: type },
+        }, {
+          reservationBytes: maxOutputBytesPerJob, budgetBytes: maxStorageBytesPerTenant,
+          maxJobsPerMonth, period,
+        });
+      } catch (error) {
+        if (error.code === 'CLOUD_STORAGE_BUDGET') {
+          audit(principal, 'quota.storage_denied', null, 'denied', { budgetBytes: maxStorageBytesPerTenant });
+          throw bad('Tenant storage budget exceeded', 429);
+        }
+        if (error.code === 'CLOUD_MONTHLY_JOB_BUDGET') {
+          audit(principal, 'quota.monthly_jobs_denied', null, 'denied', { period });
+          throw bad('Tenant monthly job budget exceeded', 429);
+        }
+        throw error;
+      }
+      job.maxOutputBytes = maxOutputBytesPerJob;
     } else store.save(job);
     jobs.set(id, job);
     pruneHistory();
@@ -372,6 +468,7 @@ export function createStudioServer({
             jobId: job.id, tenantId: job.tenantId, projectId: job.projectId,
             type: job.type, request: requestSnapshot ? structuredClone(requestSnapshot) : null,
             outputDir: job.outputDir, signal: job.abortController.signal,
+            maxOutputBytes: job.maxOutputBytes,
           })
           : await work(job, job.abortController.signal);
         if (job.abortController.signal.aborted) {
@@ -385,13 +482,50 @@ export function createStudioServer({
         job.error = cancelled ? 'Cancelled by operator' : (error.message || 'Job failed');
         job.status = cancelled ? 'cancelled' : 'failed';
       } finally {
+        const terminalStatus = job.status;
         job.finishedAt = new Date().toISOString();
-        store.save(job);
         if (cloudMode) {
-          audit({ tenantId: job.tenantId, projectId: job.projectId, principalId: principal?.principalId },
-            job.status === 'completed' ? 'job.completed' : job.status === 'cancelled' ? 'job.cancelled' : 'job.failed',
-            job.id, job.status === 'failed' ? 'failed' : 'success', { jobType: job.type });
+          // Keep the public state non-terminal until usage and its audit record
+          // are durably committed; clients must not observe completion early.
+          job.status = 'running';
+          store.save(job);
+          try {
+            let artifactBytes = await directoryBytes(job.outputDir);
+            let finalStatus = terminalStatus;
+            let finalError = job.error;
+            if (artifactBytes > maxOutputBytesPerJob) {
+              rmSync(job.outputDir, { recursive: true, force: true });
+              artifactBytes = 0;
+              finalStatus = 'failed';
+              finalError = 'Cloud worker output exceeded the tenant storage reservation';
+            }
+            const workerMs = Math.max(0, Date.parse(job.finishedAt) - Date.parse(job.startedAt || job.createdAt));
+            const period = new Date(job.createdAt).toISOString().slice(0, 7);
+            const costMicros =
+              Math.ceil(workerMs / 1000) * workerCostPerSecondMicros +
+              Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
+            if (!Number.isSafeInteger(costMicros)) throw new Error('Usage cost exceeds safe integer range');
+            const outcome = finalStatus;
+            store.finalizeCloudUsage({ ...job, status: finalStatus }, {
+              workerMs, artifactBytes, costMicros, period, outcome,
+            }, {
+              tenantId: job.tenantId, projectId: job.projectId,
+              principalId: principal?.principalId || null,
+              action: finalStatus === 'completed' ? 'job.completed' :
+                finalStatus === 'cancelled' ? 'job.cancelled' : 'job.failed',
+              resourceId: job.id, outcome: finalStatus === 'failed' ? 'failed' : 'success',
+              details: { jobType: job.type, workerMs, artifactBytes, costMicros },
+            });
+            job.status = finalStatus;
+            job.error = finalError;
+          } catch (usageError) {
+            job.status = 'failed';
+            job.error = 'Cloud usage accounting failed: ' + usageError.message;
+          }
+        } else {
+          job.status = terminalStatus;
         }
+        store.save(job);
         pruneHistory();
       }
     });
@@ -438,6 +572,22 @@ export function createStudioServer({
       if (req.method === 'GET' && pathname === '/api/health') {
         return json(res, 200, { status: 'ok', scope: cloudMode ? 'cloud-api-control-plane' : 'local-only',
           persistence: 'sqlite', cloudApiEnabled: cloudMode });
+      }
+      if (req.method === 'GET' && pathname === '/api/usage' && cloudMode) {
+        const period = new Date().toISOString().slice(0, 7);
+        const usage = store.cloudUsage(principal.tenantId, period);
+        return json(res, 200, {
+          tenantId: principal.tenantId, period, currency: 'USD', estimateOnly: true,
+          usage: {
+            jobs: usage.jobs, workerMs: usage.workerMs, workerSeconds: Math.ceil(usage.workerMs / 1000),
+            artifactBytes: usage.artifactBytes, storageBytes: usage.storageBytes,
+            reservedStorageBytes: usage.reservedStorageBytes,
+            estimatedCostMicros: usage.costMicros,
+            estimatedCostUsd: usage.costMicros / 1_000_000,
+          },
+          limits: { maxJobsPerMonth, maxStorageBytesPerTenant, maxOutputBytesPerJob },
+          pricing: { workerCostPerSecondMicros, artifactCostPerMiBMicros },
+        });
       }
       if (req.method === 'GET' && pathname === '/api/jobs') {
         return json(res, 200, {
@@ -574,7 +724,21 @@ export function createStudioServer({
           job.error = 'Cancelled before execution';
           job.finishedAt = new Date().toISOString();
           store.save(job);
-          audit(principal, 'job.cancelled', job.id, 'success', { jobType: job.type, phase: 'queued' });
+          if (cloudMode && !store.hasCloudUsage(job.id)) {
+            const artifactBytes = await directoryBytes(job.outputDir);
+            const period = new Date(job.createdAt).toISOString().slice(0, 7);
+            const costMicros = Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
+            store.finalizeCloudUsage(job, {
+              workerMs: 0, artifactBytes, costMicros, period, outcome: 'cancelled',
+            }, {
+              tenantId: job.tenantId, projectId: job.projectId,
+              principalId: principal?.principalId || null, action: 'job.cancelled',
+              resourceId: job.id, outcome: 'success',
+              details: { jobType: job.type, phase: 'queued' },
+            });
+          } else {
+            audit(principal, 'job.cancelled', job.id, 'success', { jobType: job.type, phase: 'queued' });
+          }
           pruneHistory();
           return json(res, 200, { id: job.id, status: job.status });
         }

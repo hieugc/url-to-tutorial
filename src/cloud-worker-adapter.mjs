@@ -251,11 +251,13 @@ export function createDockerWorkerAdapter({
       job.signal?.addEventListener('abort', onAbort, { once: true });
       if (job.signal?.aborted) throw abortError();
 
+      const outputLimit = Number.isSafeInteger(job.maxOutputBytes)
+        ? Math.min(maxOutputBytes, job.maxOutputBytes) : maxOutputBytes;
       const monitorOutput = async () => {
         if (monitorStopped || monitorError) return;
         try {
           const bytes = await directoryBytes(outputReal);
-          if (bytes > maxOutputBytes) {
+          if (bytes > outputLimit) {
             monitorError = new Error('Cloud worker output exceeded the configured byte limit');
             if (!stopPromise) stopPromise = stopContainer(containerName);
             await stopPromise;
