@@ -56,6 +56,29 @@ Each credential entry contains `tokenId`, `principalId`, `token`, `tenantId`, `p
 - The injected durable `rolloutStore` must implement `beginRollout`, `getRollout`, `resumeRollout`, `recordReplicaAck`, `recordReplicaFailure`, `markPartialRollout` and `completeRollout`. Its begin operation must atomically acquire a single active rollout lease, reject a revision older than the last completed revision (and reject a same-version/different-digest snapshot), and bind the immutable replica ID set plus snapshot digest. Both `beginRollout` and `resumeRollout` must return a fresh opaque fencing token. Every acknowledgement, failure, partial and completion write must present that token; a stale coordinator's token must be rejected after a lease is reclaimed. Resume must atomically reacquire the lease for the same partial rollout; only one coordinator may resume it at a time. The store may reclaim an `in_progress` lease only after its configured expiry and must issue a new fencing token. Partial and completed transitions release the lease. Completion must compare-and-set the same rollout/version and require an acknowledgement from every registered replica. Failed replicas must have any stale acknowledgement removed.
 - Persist only rollout IDs, decimal secret versions, SHA-256 snapshot digests, replica IDs, token IDs, audit key IDs, actor IDs, timestamps and sanitized error codes. Never persist credential material, MFA sessions, replica assertions or provider error text. The store must be independently durable/shared by all coordinator instances; an in-memory or per-process SQLite implementation is not sufficient for multi-host production.
 - Partial rollouts do not automatically roll back replicas that already applied the new version. The result remains `partial`; resume using the same `rolloutId`, the same immutable provider revision and exactly the same replica inventory. A replica already acknowledged is rechecked and skipped only if its live status still matches. Do not revoke the previous credential until every replica acknowledges the replacement and client cutover is confirmed.
+AWS host bootstrap example (trusted process code only):
+
+```js
+import { createCloudStudioFromSecretManager } from '../src/cloud-bootstrap.mjs';
+import { createDefaultAwsSecretsManagerAdapter } from '../src/cloud-secrets-aws.mjs';
+
+const secretManager = await createDefaultAwsSecretsManagerAdapter({
+  region: 'ap-southeast-1',
+  secretId: 'tutorial/cloud/runtime',
+});
+const cloud = await createCloudStudioFromSecretManager({
+  secretManager,
+  operatorAuthenticator, // MFA-backed; validates the host's operator session/assertions
+  serverOptions: {
+    outputRoot,
+    cloudAllowedHosts: ['api.example.test'],
+    cloudTrustedProxy: true,
+    cloudWorker, // separately isolated worker adapter
+  },
+});
+cloud.server.listen(4173, '127.0.0.1');
+```
+
 - The coordinator is an orchestration engine plus adapter contracts, not a deployed distributed service: the AWS adapter is read-only; no secret publisher, mTLS replica RPC adapter, durable distributed rollout-store implementation or break-glass workflow is bundled. Provider-side audit configuration and independent operational validation remain release gates.
 
 Trusted host bootstrap (illustrative):
