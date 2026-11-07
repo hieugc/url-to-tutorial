@@ -168,8 +168,9 @@ export function createAwsSecretsManagerAdapter({
 
 /**
  * Construct the AWS SDK client using its default credential provider chain.
- * Prefer an ECS task role, EC2 instance profile or workload identity. Static
- * access keys are intentionally not accepted by this helper.
+ * Prefer an ECS task role, EC2 instance profile or workload identity. This
+ * helper does not accept explicit credential values; the SDK default chain may
+ * still resolve environment or shared-profile credentials if the host provides them.
  */
 export async function createDefaultAwsSecretsManagerAdapter({ region, secretId } = {}) {
   if (typeof region !== 'string' || !/^[a-z]{2}(?:-gov)?-[a-z]+-[0-9]$/.test(region)) {
