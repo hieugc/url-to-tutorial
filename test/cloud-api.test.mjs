@@ -592,7 +592,11 @@ test('Versioned audit key ring migrates legacy HMAC rows before rotating and pre
   const nextKey = 'next-audit-key-material-for-rotation-0123456789';
   const oldKeyId = createHash('sha256').update(oldKey).digest('hex').slice(0, 16);
   const nextKeyId = createHash('sha256').update(nextKey).digest('hex').slice(0, 16);
-  const legacy = new StudioJobStore(root, { auditKey: oldKey });
+  const keys = { [oldKeyId]: oldKey, [nextKeyId]: nextKey };
+  const legacy = new StudioJobStore(root, {
+    auditKeyRing: { activeKeyId: oldKeyId, keys },
+  });
+  assert.equal(legacy.legacyAuditKey.toString(), oldKey);
   legacy.db.exec('DROP TABLE cloud_audit_events');
   legacy.db.exec('CREATE TABLE cloud_audit_events (' +
     'event_id TEXT PRIMARY KEY, sequence INTEGER, previous_hash TEXT, event_hash TEXT, ' +
@@ -616,7 +620,6 @@ test('Versioned audit key ring migrates legacy HMAC rows before rotating and pre
     .run(legacyHash);
   legacy.close();
 
-  const keys = { [oldKeyId]: oldKey, [nextKeyId]: nextKey };
   const migrated = new StudioJobStore(root, {
     auditKeyRing: { activeKeyId: oldKeyId, keys },
   });
