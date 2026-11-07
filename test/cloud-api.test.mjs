@@ -541,6 +541,12 @@ test('Cloud audit HMAC chain migrates legacy rows, verifies across restart and d
   t.after(() => rm(root, { recursive: true, force: true }));
   const auditKey = 'test-only-cloud-audit-signing-key-0123456789abcdef';
   const legacy = new StudioJobStore(root);
+  legacy.db.exec('DROP TABLE cloud_audit_events');
+  legacy.db.exec('CREATE TABLE cloud_audit_events (' +
+    'event_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT, principal_id TEXT, ' +
+    'action TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT)');
+  legacy.db.exec('CREATE INDEX cloud_audit_events_tenant_time ON cloud_audit_events(tenant_id, created_at)');
+  legacy.db.exec('DROP TABLE cloud_audit_state');
   legacy.db.prepare(
     'INSERT INTO cloud_audit_events (event_id, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details) ' +
     'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
