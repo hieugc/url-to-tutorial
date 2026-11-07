@@ -74,6 +74,7 @@ function serverOptions(outputRoot, overrides = {}) {
   return {
     outputRoot, cloudMode: true, cloudTokens: tokens,
     cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true,
+    cloudAuditKey: 'test-only-cloud-audit-signing-key-0123456789abcdef',
     cloudPreflight: async value => {
       const target = new URL(value);
       if (target.protocol !== 'https:' || ['localhost', '127.0.0.1',
@@ -101,6 +102,10 @@ test('Cloud API authenticates every tenant route and enforces project-scoped job
   assert.throws(() => createStudioServer({ cloudMode: true, cloudTokens: tokens,
     cloudAllowedHosts: ['api.example.test'], cloudWorker: async () => result }),
   /trusted TLS-terminating reverse proxy/);
+  assert.throws(() => createStudioServer({ cloudMode: true, cloudTokens: tokens,
+    cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true,
+    cloudWorker: async () => result }),
+  /audit signing key/);
   assert.throws(() => createStudioServer({ cloudMode: true, cloudTokens: tokens,
     cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true }),
   /isolated-worker adapter/);
