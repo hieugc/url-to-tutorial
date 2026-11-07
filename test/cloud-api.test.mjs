@@ -21,7 +21,7 @@ function call(origin, route, {
 } = {}) {
   const target = new URL(origin);
   return new Promise((resolve, reject) => {
-    const headers = { Host: host };
+    const headers = { Host: host, 'X-Forwarded-Proto': 'https' };
     if (token) headers.Authorization = 'Bearer ' + token;
     if (projectId) headers['X-Project-ID'] = projectId;
     if (originHeader) headers.Origin = originHeader;
@@ -73,8 +73,8 @@ const result = {
 function serverOptions(outputRoot, overrides = {}) {
   return {
     outputRoot, cloudMode: true, cloudTokens: tokens,
-    cloudAllowedHosts: ['api.example.test'],
-    exploreImpl: async () => result,
+    cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true,
+    cloudWorker: async () => result,
     ...overrides,
   };
 }
@@ -90,6 +90,12 @@ test('Cloud auth requires strong configured tokens and explicit tenant project A
 });
 
 test('Cloud API authenticates every tenant route and enforces project-scoped job access', async t => {
+  assert.throws(() => createStudioServer({ cloudMode: true, cloudTokens: tokens,
+    cloudAllowedHosts: ['api.example.test'], cloudWorker: async () => result }),
+  /trusted TLS-terminating reverse proxy/);
+  assert.throws(() => createStudioServer({ cloudMode: true, cloudTokens: tokens,
+    cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true }),
+  /isolated-worker adapter/);
   const root = await temp();
   const studio = createStudioServer(serverOptions(root));
   const origin = await listen(studio.server);
@@ -145,7 +151,7 @@ test('Cloud API applies tenant-wide concurrent and rolling daily job quotas', as
   let calls = 0;
   const studio = createStudioServer(serverOptions(root, {
     cloudLimits: { maxConcurrentJobsPerTenant: 1, maxJobsPerDay: 1, maxRequestsPerMinute: 30 },
-    exploreImpl: async () => {
+    cloudWorker: async () => {
       calls++;
       if (calls === 1) {
         signalFirst();
