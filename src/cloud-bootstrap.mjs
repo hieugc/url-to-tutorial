@@ -117,7 +117,6 @@ export async function createCloudStudioFromSecretManager({
   const liveKeyRing = studio.auditAdmin.keyMetadata();
   if (liveKeyRing.activeKeyId !== initialAuditKeyRing.activeKeyId ||
       JSON.stringify([...liveKeyRing.keyIds].sort()) !== JSON.stringify(initialAuditKeyRing.keyIds)) {
-    studio.server.close();
     studio.store?.close?.();
     throw new Error('Cloud server audit key ring does not match the secret manager snapshot');
   }
