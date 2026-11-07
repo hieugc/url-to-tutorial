@@ -13,6 +13,7 @@ import { render } from './render.mjs';
 import { renderNarrated } from './narration.mjs';
 import { StudioJobStore } from './job-store.mjs';
 import { createCloudAuth } from './cloud-auth.mjs';
+import { publicUrlPreflight } from './cloud-egress.mjs';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'studio');
 const assets = new Map([
@@ -127,6 +128,7 @@ export function createStudioServer({
   cloudAllowedHosts = [],
   cloudTrustedProxy = false,
   cloudWorker = null,
+  cloudPreflight = publicUrlPreflight,
 } = {}) {
   const allowedCloudHosts = new Set(cloudAllowedHosts.map(host => String(host).trim().toLowerCase()));
   if (cloudMode && (!allowedCloudHosts.size ||
@@ -493,6 +495,10 @@ export function createStudioServer({
         if (!url.success || goal.length < 4 || goal.length > 400 || !['vi', 'en'].includes(language)) {
           return json(res, 422, { error: 'Valid URL, specific goal (4–400 characters), and language vi/en required' });
         }
+        if (cloudMode) {
+          try { await cloudPreflight(url.data); }
+          catch (error) { return json(res, 422, { error: error.message }); }
+        }
         const job = start('goal', (current, signal) => goalImpl(url.data, {
           goal, ai, language, outDir: current.outputDir, signal,
         }), { url: url.data, goal, ai, language }, requestKey, principal);
@@ -507,6 +513,10 @@ export function createStudioServer({
         catch (error) { return json(res, 422, { error: error.message }); }
         const language = body.language ?? 'vi';
         if (!['vi', 'en'].includes(language)) return json(res, 422, { error: 'language must be vi or en' });
+        if (cloudMode) {
+          try { await cloudPreflight(url); }
+          catch (error) { return json(res, 422, { error: error.message }); }
+        }
         const job = start('hostinger', (current, signal) => hostingerImpl(url, {
           outDir: current.outputDir, language, signal,
         }), { url, language }, requestKey, principal);
@@ -522,6 +532,10 @@ export function createStudioServer({
         if (!url.success || !['vi', 'en'].includes(language) ||
             !Number.isInteger(maxPages) || maxPages < 1 || maxPages > 5) {
           return json(res, 422, { error: 'Valid HTTP(S) URL, language vi/en and maxPages 1–5 required' });
+        }
+        if (cloudMode) {
+          try { await cloudPreflight(url.data); }
+          catch (error) { return json(res, 422, { error: error.message }); }
         }
         const job = start('discover', (current, signal) => exploreImpl(url.data, {
           outDir: current.outputDir, maxPages, language, signal,
@@ -540,10 +554,21 @@ export function createStudioServer({
       }
 
       if (pathname === '/api/preview' || pathname === '/api/render') {
+        if (cloudMode && pathname === '/api/preview') {
+          return json(res, 403, { error: 'Interactive preview is disabled in cloud workers' });
+        }
         const checked = checkPlan(body.plan);
         if (!checked.valid) return json(res, 422, { errors: checked.errors, error: 'Invalid plan' });
         if (!checked.ready) {
           return json(res, 409, { error: 'Action steps require review', reviewIssues: checked.reviewIssues });
+        }
+        if (cloudMode && checked.plan.steps.some(step =>
+          !['highlight', 'branch', 'stop'].includes(step.action))) {
+          return json(res, 403, { error: 'Cloud render permits read-only highlight/branch/stop steps only' });
+        }
+        if (cloudMode) {
+          try { await cloudPreflight(checked.plan.url); }
+          catch (error) { return json(res, 422, { error: error.message }); }
         }
         const actionable = checked.plan.steps.some(step => ['click', 'fill', 'navigate'].includes(step.action));
         if (actionable && body.confirmedExecution !== true) {
