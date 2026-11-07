@@ -15,8 +15,12 @@ const safePlan = {
   ],
 };
 
-test('Cloud worker requires the dedicated proxy and a valid tenant/job envelope', async () => {
+test('Cloud worker requires the dedicated proxy and a valid tenant/job envelope', async t => {
   const original = process.env.TUTORIAL_EGRESS_PROXY;
+  t.after(() => {
+    if (original === undefined) delete process.env.TUTORIAL_EGRESS_PROXY;
+    else process.env.TUTORIAL_EGRESS_PROXY = original;
+  });
   delete process.env.TUTORIAL_EGRESS_PROXY;
   await assert.rejects(runCloudWorkerJob(envelope('discover', {
     url: 'https://example.com', maxPages: 1, language: 'en',
