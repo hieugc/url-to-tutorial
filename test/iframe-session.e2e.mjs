@@ -151,6 +151,10 @@ test('Reviewed fill and click actions work inside a cross-origin iframe while fi
       res.writeHead(204).end();
       return;
     }
+    if (req.url !== '/') {
+      res.writeHead(204).end();
+      return;
+    }
     childLoads++;
     send(res, '<!doctype html><html><body>' +
       '<input id="secret" type="text" autocomplete="email" placeholder="PRIVATE_IFRAME_PLACEHOLDER">' +
@@ -170,7 +174,11 @@ test('Reviewed fill and click actions work inside a cross-origin iframe while fi
       'document.querySelector("#result").textContent="Saved safely";fetch("/clicked");});' +
       '</script></body></html>');
   });
-  const parent = await start((_req, res) => {
+  const parent = await start((req, res) => {
+    if (req.url !== '/') {
+      res.writeHead(204).end();
+      return;
+    }
     parentLoads++;
     send(res, '<!doctype html><html><body><h1>Parent application</h1>' +
       '<iframe id="details" title="Cross-origin details" ' +
@@ -229,8 +237,8 @@ test('Reviewed fill and click actions work inside a cross-origin iframe while fi
     assert.ok(maskSnapshots.length >= 2, 'Mask state must be checked before and after filling');
     for (const snapshot of maskSnapshots) {
       assert.equal(snapshot.redacted, 'true', 'The field must carry the privacy marker inside the iframe');
-      assert.match(snapshot.color, /rgba\\(0, 0, 0, 0\\)/, 'Input text must be transparent');
-      assert.match(snapshot.placeholderColor, /rgba\\(0, 0, 0, 0\\)/, 'Placeholder text must be transparent');
+      assert.match(snapshot.color, /rgba\(0, 0, 0, 0\)/, 'Input text must be transparent');
+      assert.match(snapshot.placeholderColor, /rgba\(0, 0, 0, 0\)/, 'Placeholder text must be transparent');
       assert.equal(snapshot.placeholderOpacity, '0');
     }
 
