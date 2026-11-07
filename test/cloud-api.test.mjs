@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -541,7 +541,7 @@ test('Cloud audit HMAC chain migrates legacy rows, verifies across restart and d
   const root = await temp();
   t.after(() => rm(root, { recursive: true, force: true }));
   const auditKey = 'test-only-cloud-audit-signing-key-0123456789abcdef';
-  const legacy = new StudioJobStore(root);
+  const legacy = new StudioJobStore(root, { auditKey: oldKey });
   legacy.db.exec('DROP TABLE cloud_audit_events');
   legacy.db.exec('CREATE TABLE cloud_audit_events (' +
     'event_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT, principal_id TEXT, ' +
@@ -606,12 +606,7 @@ test('Versioned audit key ring migrates legacy HMAC rows before rotating and pre
     details: JSON.stringify({ jobType: 'discover' }),
   };
   const previousHash = '0'.repeat(64);
-  const payload = JSON.stringify([
-    event.eventId, event.tenantId, event.projectId, event.principalId,
-    event.action, event.resourceId, event.outcome, event.createdAt, event.details,
-  ]);
-  const legacyHash = createHmac('sha256', oldKey)
-    .update('1\\n' + previousHash + '\\n' + payload, 'utf8').digest('hex');
+  const legacyHash = legacy.legacyAuditEventHash(1, previousHash, event);
   legacy.db.prepare(
     'INSERT INTO cloud_audit_events (event_id, sequence, previous_hash, event_hash, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details) ' +
     'VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
