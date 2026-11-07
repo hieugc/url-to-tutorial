@@ -10,17 +10,18 @@ const terminal = job => ['completed', 'failed', 'cancelled', 'interrupted'].incl
 
 export class StudioJobStore {
   constructor(outputRoot, { auditKey = null } = {}) {
+    if (auditKey !== null && typeof auditKey !== 'string' && !Buffer.isBuffer(auditKey)) {
+      throw new TypeError('Cloud audit signing key must be a string or Buffer');
+    }
+    const resolvedAuditKey = auditKey === null ? null : Buffer.from(auditKey);
+    if (resolvedAuditKey && resolvedAuditKey.length < 32) {
+      throw new TypeError('Cloud audit signing key must contain at least 32 bytes');
+    }
     const root = path.resolve(outputRoot);
     mkdirSync(root, { recursive: true });
     this.db = new DatabaseSync(path.join(root, 'studio-jobs.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL;');
-    if (auditKey !== null && typeof auditKey !== 'string' && !Buffer.isBuffer(auditKey)) {
-      throw new TypeError('Cloud audit signing key must be a string or Buffer');
-    }
-    this.auditKey = auditKey === null ? null : Buffer.from(auditKey);
-    if (this.auditKey && this.auditKey.length < 32) {
-      throw new TypeError('Cloud audit signing key must contain at least 32 bytes');
-    }
+    this.auditKey = resolvedAuditKey;
     this.db.exec('CREATE TABLE IF NOT EXISTS studio_jobs (' +
       'id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS cloud_job_submissions (' +
