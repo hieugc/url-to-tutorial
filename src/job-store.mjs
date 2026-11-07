@@ -87,6 +87,10 @@ export class StudioJobStore {
       'SELECT COUNT(*) AS jobs, COALESCE(SUM(worker_ms), 0) AS workerMs, ' +
       'COALESCE(SUM(artifact_bytes), 0) AS artifactBytes, COALESCE(SUM(cost_micros), 0) AS costMicros ' +
       'FROM cloud_usage_events WHERE tenant_id=? AND period=?');
+    this.monthlyReservationsStatement = this.db.prepare(
+      'SELECT COUNT(*) AS count FROM cloud_storage_reservations WHERE tenant_id=?');
+    this.hasCloudUsageStatement = this.db.prepare(
+      'SELECT 1 AS present FROM cloud_usage_events WHERE job_id=?');
     this.insertCloudUsageStatement = this.db.prepare(
       'INSERT INTO cloud_usage_events (job_id, tenant_id, project_id, period, job_type, outcome, worker_ms, artifact_bytes, cost_micros, created_at, finalized_at) ' +
       'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET ' +
@@ -182,6 +186,10 @@ export class StudioJobStore {
     }
   }
 
+  hasCloudUsage(jobId) {
+    return Boolean(this.hasCloudUsageStatement.get(jobId));
+  }
+
   cloudUsage(tenantId, period) {
     const usage = this.monthlyUsageStatement.get(tenantId, period);
     const storage = this.storageTotalsStatement.get(tenantId, tenantId);
@@ -219,7 +227,8 @@ export class StudioJobStore {
       this.recordCloudSubmission.run(snapshot.id, snapshot.tenantId, snapshot.projectId, snapshot.createdAt);
       if (storage?.maxJobsPerMonth && storage?.period) {
         const usage = this.monthlyUsageStatement.get(snapshot.tenantId, storage.period);
-        if (Number(usage.jobs || 0) >= storage.maxJobsPerMonth) {
+        const reservations = this.monthlyReservationsStatement.get(snapshot.tenantId);
+        if (Number(usage.jobs || 0) + Number(reservations.count || 0) >= storage.maxJobsPerMonth) {
           const error = new Error('Tenant monthly job budget exceeded');
           error.code = 'CLOUD_MONTHLY_JOB_BUDGET';
           throw error;
