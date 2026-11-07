@@ -25,8 +25,20 @@ function snapshot(version = '2', token = tokenB) {
 
 function createStore() {
   const records = new Map();
+  const leases = new Map();
+  let leaseSequence = 0;
   let completedVersion = '0';
   const calls = [];
+  const issueLease = id => {
+    const leaseToken = 'rollout-fencing-token-' + (++leaseSequence);
+    leases.set(id, leaseToken);
+    return { leaseToken };
+  };
+  const assertLease = input => {
+    if (!input.leaseToken || leases.get(input.rolloutId) !== input.leaseToken) {
+      throw new Error('stale rollout fencing token');
+    }
+  };
   return {
     calls,
     records,
@@ -46,6 +58,7 @@ function createStore() {
         acknowledgements: {},
         failures: {},
       });
+      return issueLease(input.rolloutId);
     },
     async getRollout(id) {
       const record = records.get(id);
@@ -56,8 +69,10 @@ function createStore() {
       const record = records.get(input.rolloutId);
       if (!record || record.state !== 'partial') throw new Error('resume not allowed');
       record.state = 'in_progress';
+      return issueLease(input.rolloutId);
     },
     async recordReplicaAck(input) {
+      assertLease(input);
       calls.push({ method: 'recordReplicaAck', input });
       const record = records.get(input.rolloutId);
       record.acknowledgements[input.replicaId] = {
@@ -70,6 +85,7 @@ function createStore() {
       delete record.failures[input.replicaId];
     },
     async recordReplicaFailure(input) {
+      assertLease(input);
       calls.push({ method: 'recordReplicaFailure', input });
       const record = records.get(input.rolloutId);
       delete record.acknowledgements[input.replicaId];
@@ -77,13 +93,16 @@ function createStore() {
       record.failures[input.replicaId] = input.errorCode;
     },
     async markPartialRollout(input) {
+      assertLease(input);
       calls.push({ method: 'markPartialRollout', input });
       const record = records.get(input.rolloutId);
       record.state = 'partial';
       record.acknowledgedReplicaIds = [...input.acknowledgedReplicaIds];
       record.failedReplicaIds = [...input.failedReplicaIds];
+      leases.delete(input.rolloutId);
     },
     async completeRollout(input) {
+      assertLease(input);
       calls.push({ method: 'completeRollout', input });
       const record = records.get(input.rolloutId);
       if (JSON.stringify(record.acknowledgedReplicaIds) !== JSON.stringify([...input.replicaIds])) {
@@ -91,6 +110,7 @@ function createStore() {
       }
       record.state = 'completed';
       completedVersion = input.targetVersion;
+      leases.delete(input.rolloutId);
     },
   };
 }
