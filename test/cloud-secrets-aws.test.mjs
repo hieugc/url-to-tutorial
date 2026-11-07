@@ -91,7 +91,7 @@ test('rejects missing, ambiguous, oversized and malformed AWS secret values', as
       SecretBinary: Buffer.from(JSON.stringify(bundle())),
     }, /exactly one string or binary/],
     ['invalid JSON', { SecretString: '{invalid-json' }, /not valid JSON/],
-    ['empty value', { SecretString: '' }, /not valid JSON/],
+    ['empty value', { SecretString: '' }, /between 1 byte and 64 KiB/],
     ['oversized value', { SecretString: 'x'.repeat(64 * 1024 + 1) }, /between 1 byte and 64 KiB/],
     ['unsupported binary', { SecretBinary: 'not-a-byte-array' }, /unsupported binary/],
   ];
