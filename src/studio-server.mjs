@@ -483,17 +483,22 @@ export function createStudioServer({
         job.error = cancelled ? 'Cancelled by operator' : (error.message || 'Job failed');
         job.status = cancelled ? 'cancelled' : 'failed';
       } finally {
+        const terminalStatus = job.status;
         job.finishedAt = new Date().toISOString();
-        store.save(job);
         if (cloudMode) {
+          // Keep the public state non-terminal until usage and its audit record
+          // are durably committed; clients must not observe completion early.
+          job.status = 'running';
+          store.save(job);
           try {
             let artifactBytes = await directoryBytes(job.outputDir);
+            let finalStatus = terminalStatus;
+            let finalError = job.error;
             if (artifactBytes > maxOutputBytesPerJob) {
               rmSync(job.outputDir, { recursive: true, force: true });
               artifactBytes = 0;
-              job.status = 'failed';
-              job.error = 'Cloud worker output exceeded the tenant storage reservation';
-              store.save(job);
+              finalStatus = 'failed';
+              finalError = 'Cloud worker output exceeded the tenant storage reservation';
             }
             const workerMs = Math.max(0, Date.parse(job.finishedAt) - Date.parse(job.startedAt || job.createdAt));
             const period = new Date(job.createdAt).toISOString().slice(0, 7);
@@ -501,18 +506,27 @@ export function createStudioServer({
               Math.ceil(workerMs / 1000) * workerCostPerSecondMicros +
               Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
             if (!Number.isSafeInteger(costMicros)) throw new Error('Usage cost exceeds safe integer range');
-            store.finalizeCloudUsage(job, { workerMs, artifactBytes, costMicros, period, outcome: job.status });
-            audit({ tenantId: job.tenantId, projectId: job.projectId, principalId: principal?.principalId },
-              job.status === 'completed' ? 'job.completed' : job.status === 'cancelled' ? 'job.cancelled' : 'job.failed',
-              job.id, job.status === 'failed' ? 'failed' : 'success',
-              { jobType: job.type, workerMs, artifactBytes, costMicros });
+            const outcome = finalStatus;
+            store.finalizeCloudUsage({ ...job, status: finalStatus }, {
+              workerMs, artifactBytes, costMicros, period, outcome,
+            }, {
+              tenantId: job.tenantId, projectId: job.projectId,
+              principalId: principal?.principalId || null,
+              action: finalStatus === 'completed' ? 'job.completed' :
+                finalStatus === 'cancelled' ? 'job.cancelled' : 'job.failed',
+              resourceId: job.id, outcome: finalStatus === 'failed' ? 'failed' : 'success',
+              details: { jobType: job.type, workerMs, artifactBytes, costMicros },
+            });
+            job.status = finalStatus;
+            job.error = finalError;
           } catch (usageError) {
             job.status = 'failed';
             job.error = 'Cloud usage accounting failed: ' + usageError.message;
-            store.save(job);
-            throw usageError;
           }
+        } else {
+          job.status = terminalStatus;
         }
+        store.save(job);
         pruneHistory();
       }
     });
