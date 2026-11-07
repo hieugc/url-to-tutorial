@@ -74,6 +74,14 @@ function serverOptions(outputRoot, overrides = {}) {
   return {
     outputRoot, cloudMode: true, cloudTokens: tokens,
     cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true,
+    cloudPreflight: async value => {
+      const target = new URL(value);
+      if (target.protocol !== 'https:' || ['localhost', '127.0.0.1',
+        'metadata.google.internal'].includes(target.hostname) || target.hostname.endsWith('.local')) {
+        throw new Error('Private or non-HTTPS destination is prohibited');
+      }
+      return target.href;
+    },
     cloudWorker: async () => result,
     ...overrides,
   };
@@ -251,4 +259,69 @@ test('Daily tenant quota survives Studio restart in SQLite', async t => {
   assert.match(blocked.data.error, /daily-job quota/);
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   assert.equal(second.store.countCloudSubmissions('tenant-a', since), 1);
+});
+
+
+test('Cloud API rejects non-public targets, interactive preview and mutating render plans', async t => {
+  const root = await temp();
+  let workerCalls = 0;
+  const studio = createStudioServer(serverOptions(root, {
+    cloudWorker: async () => { workerCalls++; return result; },
+  }));
+  const origin = await listen(studio.server);
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const submit = (route, body) => call(origin, route, {
+    method: 'POST', token: tokenA, projectId: 'project-a', body,
+  });
+  assert.equal((await submit('/api/discover', {
+    url: 'http://example.com', language: 'en', maxPages: 1,
+  })).status, 422);
+  assert.equal((await submit('/api/discover', {
+    url: 'https://localhost', language: 'en', maxPages: 1,
+  })).status, 422);
+  assert.equal((await submit('/api/discover', {
+    url: 'https://metadata.google.internal', language: 'en', maxPages: 1,
+  })).status, 422);
+
+  const safePlan = {
+    schemaVersion: 1, title: 'Read-only cloud guide', url: 'https://example.com',
+    language: 'en', steps: [
+      { id: 'heading', title: 'Heading', description: 'Observe heading',
+        target: { css: 'h1' }, action: 'highlight', holdMs: 500 },
+      { id: 'stop', title: 'Stop', description: 'End', action: 'stop', holdMs: 500 },
+    ],
+  };
+  assert.equal((await submit('/api/preview', { plan: safePlan })).status, 403);
+
+  const clickPlan = {
+    ...safePlan,
+    steps: [
+      { id: 'click', title: 'Click', description: 'Click control',
+        target: { css: 'button' }, action: 'click', reviewed: true, holdMs: 500 },
+      { id: 'stop', title: 'Stop', description: 'End', action: 'stop', holdMs: 500 },
+    ],
+  };
+  assert.equal((await submit('/api/render', {
+    plan: clickPlan, confirmedExecution: true,
+  })).status, 403);
+
+  const navigationPlan = {
+    ...safePlan,
+    steps: [
+      { id: 'navigate', title: 'Navigate', description: 'Open next page',
+        action: 'navigate', url: 'https://example.com/next', reviewed: true, holdMs: 500 },
+      { id: 'stop', title: 'Stop', description: 'End', action: 'stop', holdMs: 500 },
+    ],
+  };
+  assert.equal((await submit('/api/render', {
+    plan: navigationPlan, confirmedExecution: true,
+  })).status, 403);
+
+  const accepted = await submit('/api/render', { plan: safePlan });
+  assert.equal(accepted.status, 202);
+  assert.equal(workerCalls, 1, 'Only the read-only render reaches the isolated worker');
 });
