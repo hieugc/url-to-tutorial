@@ -487,7 +487,14 @@ export function createStudioServer({
         store.save(job);
         if (cloudMode) {
           try {
-            const artifactBytes = await directoryBytes(job.outputDir);
+            let artifactBytes = await directoryBytes(job.outputDir);
+            if (artifactBytes > maxOutputBytesPerJob) {
+              rmSync(job.outputDir, { recursive: true, force: true });
+              artifactBytes = 0;
+              job.status = 'failed';
+              job.error = 'Cloud worker output exceeded the tenant storage reservation';
+              store.save(job);
+            }
             const workerMs = Math.max(0, Date.parse(job.finishedAt) - Date.parse(job.startedAt || job.createdAt));
             const period = new Date(job.createdAt).toISOString().slice(0, 7);
             const costMicros =
