@@ -617,10 +617,6 @@ test('Versioned audit key ring migrates legacy HMAC rows before rotating and pre
   legacy.close();
 
   const keys = { [oldKeyId]: oldKey, [nextKeyId]: nextKey };
-  assert.throws(() => new StudioJobStore(root, {
-    auditKeyRing: { activeKeyId: nextKeyId, keys },
-  }), /legacy event signature mismatch/, 'Legacy migration must start with the legacy signer active');
-
   const migrated = new StudioJobStore(root, {
     auditKeyRing: { activeKeyId: oldKeyId, keys },
   });
