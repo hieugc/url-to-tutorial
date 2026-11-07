@@ -110,7 +110,7 @@ function publicReport(report) {
 }
 
 async function openJobArtifact(outputRoot, jobId, filename, maxBytes) {
-  if (!/^[a-f0-9-]{36}$/i.test(jobId) || !/^[a-z0-9.-]+$/i.test(filename)) {
+  if (!/^[a-f0-9-]{36}$/i.test(jobId) || !/^[a-z0-9.-]+$/i.test(filename) || filename === '.' || filename === '..') {
     throw new Error('Invalid artifact identity');
   }
   const jobDir = path.join(path.resolve(outputRoot), jobId);
@@ -134,8 +134,12 @@ async function openJobArtifact(outputRoot, jobId, filename, maxBytes) {
 
 async function readJobJson(outputRoot, jobId, filename, maxBytes = 2 * 1024 * 1024) {
   const { handle } = await openJobArtifact(outputRoot, jobId, filename, maxBytes);
-  try { return JSON.parse(await handle.readFile({ encoding: 'utf8' })); }
-  finally { await handle.close(); }
+  try {
+    const buffer = Buffer.alloc(maxBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > maxBytes) throw new Error('Job report exceeds its size limit');
+    return JSON.parse(buffer.subarray(0, bytesRead).toString('utf8'));
+  } finally { await handle.close(); }
 }
 
 function streamJobArtifact(res, opened, headers) {
