@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { createStudioServer } from '../src/studio-server.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -64,6 +65,7 @@ test('Cloud bootstrap reads versioned secrets and forces cloud credentials into 
       cloudMode: false,
       cloudTokens: [{ token: 'must-not-win-override' }],
       cloudAuditKey: 'must-not-win-override',
+      cloudAuditKeyRing: { activeKeyId: '0000000000000000', keys: {} },
       cloudAllowedHosts: ['api.example.test'],
       cloudTrustedProxy: true,
       cloudWorker: async () => ({}),
@@ -89,6 +91,7 @@ test('Cloud bootstrap reads versioned secrets and forces cloud credentials into 
   const visible = JSON.stringify(bootstrap.status());
   assert.equal(visible.includes(tokenA), false);
   assert.equal(visible.includes(auditKey), false);
+  assert.equal(visible.includes(createHash('sha256').update(tokenA).digest('hex')), false);
 });
 
 test('Token reload requires MFA-verified operator and audits replacement before reporting success', async () => {
@@ -267,6 +270,58 @@ test('Cloud bootstrap integrates with the real Studio factory without exposing a
     if (cloud.server.listening) {
       await new Promise(resolve => cloud.server.close(resolve));
     }
+  }
+});
+
+test('Cloud bootstrap rejects an audit key whose fingerprint does not match its key ID', async () => {
+  const invalid = snapshot('1', tokenA, {
+    activeKeyId: '0000000000000000',
+    keys: { '0000000000000000': auditKey },
+  });
+  let factoryCalls = 0;
+  await assert.rejects(createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => invalid },
+    createStudioServerImpl: () => { factoryCalls++; },
+  }), /fingerprint does not match/);
+  assert.equal(factoryCalls, 0);
+});
+
+test('Token reload leaves the active registry unchanged when its audit append fails', async t => {
+  const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'url-tutorial-cloud-bootstrap-audit-failure-'));
+  t.after(() => rm(outputRoot, { recursive: true, force: true }));
+  let current = snapshot('1');
+  let rawStudio;
+  const cloud = await createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => current },
+    operatorAuthenticator: {
+      authorize: async () => ({ actorId: 'security-operator', mfaVerified: true }),
+    },
+    serverOptions: {
+      outputRoot,
+      cloudAllowedHosts: ['api.example.test'],
+      cloudTrustedProxy: true,
+      cloudWorker: async () => ({}),
+    },
+    createStudioServerImpl(options) {
+      rawStudio = createStudioServer(options);
+      const recordCloudAudits = rawStudio.store.recordCloudAudits.bind(rawStudio.store);
+      rawStudio.store.recordCloudAudits = events => {
+        if (events.some(event => event.action === 'auth.tokens_replaced')) {
+          throw new Error('audit storage unavailable');
+        }
+        return recordCloudAudits(events);
+      };
+      return rawStudio;
+    },
+  });
+  try {
+    current = snapshot('2', tokenB);
+    current.tokens[0].tokenId = 'service-a-next';
+    await assert.rejects(cloud.reloadTokens({}), /audit storage unavailable/);
+    assert.equal(cloud.status().secretVersion, '1');
+    assert.deepEqual(rawStudio.tokenAdmin.list().map(token => token.tokenId), ['service-a-current']);
+  } finally {
+    rawStudio.store.close();
   }
 });
 
