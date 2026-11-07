@@ -124,11 +124,19 @@ export function createStudioServer({
   cloudTokens = [],
   cloudLimits = {},
   cloudAllowedHosts = [],
+  cloudTrustedProxy = false,
+  cloudWorker = null,
 } = {}) {
   const allowedCloudHosts = new Set(cloudAllowedHosts.map(host => String(host).trim().toLowerCase()));
   if (cloudMode && (!allowedCloudHosts.size ||
       [...allowedCloudHosts].some(host => !/^(?=.{1,253}$)[a-z0-9.-]+$/.test(host)))) {
     throw new TypeError('Cloud mode requires an explicit list of allowed hostnames');
+  }
+  if (cloudMode && cloudTrustedProxy !== true) {
+    throw new TypeError('Cloud mode requires an explicitly trusted TLS-terminating reverse proxy');
+  }
+  if (cloudMode && typeof cloudWorker !== 'function') {
+    throw new TypeError('Cloud mode requires an isolated-worker adapter; local browser execution is disabled');
   }
   const cloudAuth = cloudMode ? createCloudAuth({ tokens: cloudTokens, limits: cloudLimits }) : null;
   const store = new StudioJobStore(outputRoot);
@@ -164,7 +172,7 @@ export function createStudioServer({
       if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return false;
       host = parsed.hostname.toLowerCase();
     } catch { return false; }
-    if (!allowedCloudHosts.has(host)) return false;
+    if (!allowedCloudHosts.has(host) || req.headers['x-forwarded-proto'] !== 'https') return false;
     if (req.headers.origin) {
       try {
         const origin = new URL(req.headers.origin);
@@ -222,7 +230,13 @@ export function createStudioServer({
       store.save(job);
       try {
         await mkdir(job.outputDir, { recursive: true });
-        job.result = await work(job, job.abortController.signal);
+        job.result = cloudMode
+          ? await cloudWorker({
+            jobId: job.id, tenantId: job.tenantId, projectId: job.projectId,
+            type: job.type, request: requestSnapshot ? structuredClone(requestSnapshot) : null,
+            outputDir: job.outputDir, signal: job.abortController.signal,
+          })
+          : await work(job, job.abortController.signal);
         if (job.abortController.signal.aborted) {
           job.status = 'cancelled';
           job.error = 'Cancelled by operator';
