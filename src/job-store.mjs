@@ -28,6 +28,9 @@ export class StudioJobStore {
         }
         const key = Buffer.from(value);
         if (key.length < 32) throw new TypeError('Cloud audit keys must contain at least 32 bytes');
+        if (createHash('sha256').update(key).digest('hex').slice(0, 16) !== keyId) {
+          throw new TypeError('Cloud audit key ID must match the SHA-256 key fingerprint');
+        }
         this.auditKeys.set(keyId, key);
       }
       if (!this.auditKeys.has(auditKeyRing.activeKeyId)) {
@@ -492,6 +495,9 @@ export class StudioJobStore {
     }
     const resolved = Buffer.from(key);
     if (resolved.length < 32) throw new TypeError('New audit signing key must contain at least 32 bytes');
+    if (createHash('sha256').update(resolved).digest('hex').slice(0, 16) !== keyId) {
+      throw new TypeError('New audit key ID must match the SHA-256 key fingerprint');
+    }
     if (this.auditKeys.has(keyId)) throw new Error('Audit key ID already exists; rotation requires a new key ID');
     if (typeof actorId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.@-]{1,63}$/.test(actorId)) {
       throw new TypeError('Audit key rotation actorId is invalid');
