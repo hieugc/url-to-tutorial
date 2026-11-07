@@ -644,7 +644,10 @@ export function createStudioServer({
         const job = findJob(jobPath[1], principal);
         if (!job) return json(res, 404, { error: 'Unknown job' });
         let report = job.result?.report || job.result;
-        if (!report && job.status === 'running' && job.type !== 'discover') {
+        if (!report && job.type !== 'discover') {
+          // Persisted/recovered jobs may have no in-memory result object. The
+          // report file is the durable fallback for both running and terminal
+          // jobs; readJobJson still enforces O_NOFOLLOW and the size ceiling.
           try { report = await readJobJson(outputRoot, job.id, 'report.json'); }
           catch { /* missing, symlinked, oversized or not yet written */ }
         }
