@@ -144,7 +144,7 @@ test('server rejects malformed reload bodies, wrong replica IDs and wildcard bin
     key: cert.serverKey, cert: cert.serverCert, ca: cert.ca,
     replicaId: 'api-replica-1', allowedClientFingerprints: [cert.clientFingerprint],
     reloadTokens: async () => {}, status: initialStatus, host: '0.0.0.0',
-  }), /explicit private interface/);
+  }), /explicit private interface|private IPv4 address/);
   assert.throws(() => createMtlsReplicaServer({
     key: cert.serverKey, cert: cert.serverCert, ca: cert.ca,
     replicaId: 'api-replica-1', allowedClientFingerprints: [],
