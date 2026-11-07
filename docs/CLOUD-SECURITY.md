@@ -51,6 +51,23 @@ Each credential entry contains `tokenId`, `principalId`, `token`, `tenantId`, `p
 - AWS secret payloads use exactly `{ schemaVersion: 1, revision: "42", tokens: [...], auditKeyRing: {...} }`. `readCloudSecrets()` reads the `AWSCURRENT` stage. `readCloudSecrets({ version: "42" })` reads the immutable custom stage `UTVREV_42`; the adapter verifies the payload's decimal `revision` matches the requested version. The publishing workflow must attach a unique `UTVREV_<revision>` stage to each immutable version and must never move or reuse that stage.
 - Install `@aws-sdk/client-secrets-manager` in the cloud host to use `createDefaultAwsSecretsManagerAdapter({ region, secretId })` for reads or `createDefaultAwsSecretsManagerPublisher({ region, secretId, publishLock })` for writes. The helpers do not accept explicit credential values; the AWS SDK default chain may resolve environment/shared-profile credentials, so production should prefer an ECS task role, EC2 instance profile or another workload identity and protect any host credential sources.
 - The AWS publisher requires a durable shared `publishLock.withLock(resource, callback)` adapter. The callback receives a lease with `assertHeld()`; the publisher checks it before reading, before writing and after the write. This is mandatory because Secrets Manager does not provide an atomic compare-and-set for `AWSCURRENT`. The lock must serialize all writers for the secret across hosts, renew its lease for the full callback, and reject stale lease holders. The publisher checks `expectedCurrentVersion`, increments the decimal revision, writes `AWSCURRENT` plus `UTVREV_<revision>`, then reads both stages back to verify the result. Retries are idempotent only when the already-published revision contains exactly the same tokens and audit key ring.
+Publisher example (the lock implementation is host-supplied and must be durable/shared):
+
+```js
+import { createDefaultAwsSecretsManagerPublisher } from '../src/cloud-secrets-aws.mjs';
+
+const publisher = await createDefaultAwsSecretsManagerPublisher({
+  region: 'ap-southeast-1',
+  secretId: 'tutorial/cloud/runtime',
+  publishLock, // distributed lock with lease.assertHeld()
+});
+const current = await publisher.readCloudSecrets();
+const published = await publisher.publishCloudSecretSnapshot({
+  snapshot: { tokens: nextTokens, auditKeyRing: current.auditKeyRing },
+  expectedCurrentVersion: current.version,
+});
+```
+
 - Use separate least-privilege roles: API runtime needs `secretsmanager:GetSecretValue` (and `kms:Decrypt` only when required by a customer-managed key); the publisher role additionally needs `secretsmanager:PutSecretValue` and only the required KMS encrypt/data-key permissions. Configure CloudTrail retention, alerting and IAM review in the AWS account; the adapter does not configure those controls.
 - `src/cloud-rollout.mjs` adds a host-side multi-replica rollout coordinator. It reads one immutable secret revision, computes a secret-free SHA-256 snapshot digest, fixes the replica inventory for that rollout, and asks each replica to reload that exact revision through its own secret-manager adapter. The coordinator never sends raw tokens or signing keys to replica RPC clients.
 - The operator authenticator must implement `createReplicaAssertion(identity, claims)` and return a short-lived signed assertion scoped to `action`, `rolloutId`, `targetVersion`, `replicaId` and `expiresAt`. Each replica must independently validate that assertion, require its own configured replica ID to equal the assertion audience, and match the `rolloutId` and `expectedVersion` request constraints before applying a reload. The internal replica transport must use mutually authenticated TLS; do not expose this RPC to tenants or the public internet.
