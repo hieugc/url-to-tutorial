@@ -40,7 +40,19 @@ Each credential entry contains `tokenId`, `principalId`, `token`, `tenantId`, `p
 
 ## Audit integrity key and verification
 
-- Pass `cloudAuditKey` to `createStudioServer` only from a trusted secret manager. Cloud mode refuses to start if it is missing or shorter than 32 bytes. Example: `createStudioServer({ ..., cloudAuditKey: await secretManager.read('tutorial/cloud-audit-key') })`.
+Trusted host-code setup:
+
+```js
+const cloudAuditKey = await secretManager.read('tutorial/cloud-audit-key');
+const studio = createStudioServer({
+  outputRoot,
+  cloudMode: true,
+  cloudAuditKey,
+  // Supply the required tokens, Host allowlist, trusted proxy and worker adapter.
+});
+```
+
+- Pass `cloudAuditKey` to `createStudioServer` only from a trusted secret manager. Cloud mode refuses to start if it is missing or shorter than 32 bytes.
 - Keep the same high-entropy key stable across restarts and replicas. Key rotation is not yet implemented; changing it without a planned chain migration makes the existing ledger unverifiable and blocks cloud startup.
 - HMAC signing and checkpoint updates occur in the same `BEGIN IMMEDIATE` transaction as each audit append. Startup verifies every sequence and signature before accepting cloud traffic.
 - The signing key is not a database field, environment dump, audit detail or HTTP response. Do not log it or expose it to workers/tenants.
