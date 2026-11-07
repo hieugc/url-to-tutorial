@@ -65,22 +65,24 @@ function auditKeyRingMetadata(ring) {
   });
 }
 
-async function readCloudSecrets(secretManager) {
+async function readCloudSecrets(secretManager, options) {
   try {
-    return await secretManager.readCloudSecrets();
+    return options === undefined
+      ? await secretManager.readCloudSecrets()
+      : await secretManager.readCloudSecrets(options);
   } catch {
     // Provider errors may contain request details; never forward them to callers.
     throw new Error('Cloud secret manager read failed');
   }
 }
 
-async function authorizeOperator(operatorAuthenticator, context, action) {
+async function authorizeOperator(operatorAuthenticator, context, action, constraints = {}) {
   if (!operatorAuthenticator || typeof operatorAuthenticator.authorize !== 'function') {
     throw new Error('An authenticated operator workflow is required for cloud secret reload');
   }
   let identity;
   try {
-    identity = await operatorAuthenticator.authorize(context, { action });
+    identity = await operatorAuthenticator.authorize(context, { action, ...constraints });
   } catch {
     throw new Error('Cloud secret reload operator authorization failed');
   }
@@ -149,14 +151,47 @@ export async function createCloudStudioFromSecretManager({
     });
   }
 
-  async function reloadTokens(context) {
+  async function reloadTokens(context, options = {}) {
     if (reloadInFlight) throw new Error('A cloud credential reload is already in progress');
+    if (!options || typeof options !== 'object' || Array.isArray(options) ||
+        Object.getPrototypeOf(options) !== Object.prototype ||
+        Object.keys(options).some(key => !['expectedVersion', 'rolloutId', 'replicaId'].includes(key))) {
+      throw new TypeError('Cloud credential reload options are invalid');
+    }
+    const expectedVersion = options.expectedVersion;
+    const rolloutId = options.rolloutId;
+    const replicaId = options.replicaId;
+    if (expectedVersion !== undefined &&
+        (typeof expectedVersion !== 'string' || !/^(0|[1-9][0-9]{0,127})$/.test(expectedVersion))) {
+      throw new TypeError('A valid pinned secret version is required');
+    }
+    if (rolloutId !== undefined &&
+        (typeof rolloutId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(rolloutId))) {
+      throw new TypeError('A valid credential rollout ID is required');
+    }
+    if (replicaId !== undefined &&
+        (typeof replicaId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$/.test(replicaId))) {
+      throw new TypeError('A valid credential replica ID is required');
+    }
     reloadInFlight = true;
     try {
       const actorId = await authorizeOperator(
-        operatorAuthenticator, context, 'cloud.credentials.reload',
+        operatorAuthenticator,
+        context,
+        'cloud.credentials.reload',
+        {
+          ...(expectedVersion === undefined ? {} : { expectedVersion }),
+          ...(rolloutId === undefined ? {} : { rolloutId }),
+          ...(replicaId === undefined ? {} : { replicaId }),
+        },
       );
-      const next = validateSecretSnapshot(await readCloudSecrets(secretManager));
+      const next = validateSecretSnapshot(await readCloudSecrets(
+        secretManager,
+        expectedVersion === undefined ? undefined : { version: expectedVersion },
+      ));
+      if (expectedVersion !== undefined && next.version !== expectedVersion) {
+        throw new Error('Secret manager did not return the pinned credential revision');
+      }
       if (BigInt(next.version) < BigInt(secretVersion)) {
         throw new Error('Secret manager returned an older snapshot revision; refusing credential rollback');
       }
