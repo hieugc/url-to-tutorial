@@ -5,7 +5,12 @@ export async function launch(headed = false) {
     headless: !headed,
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
     ...(process.env.TUTORIAL_EGRESS_PROXY
-      ? { proxy: { server: process.env.TUTORIAL_EGRESS_PROXY } }
+      ? {
+        proxy: { server: process.env.TUTORIAL_EGRESS_PROXY, bypass: '<-loopback>' },
+        // HTTP CONNECT is the only supported cloud egress path. Disable QUIC
+        // so Chromium cannot prefer a direct UDP/HTTP3 route around the proxy.
+        args: ['--disable-quic'],
+      }
       : {}),
   });
 }

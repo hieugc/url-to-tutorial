@@ -24,6 +24,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng xvfb
       - run: npm test
+      - run: npm run test:cloud:docker
       - run: npm run test:e2e
       - run: npm run test:studio:e2e
       - run: npm run test:hostinger:e2e

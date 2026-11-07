@@ -22,7 +22,8 @@
     "benchmark": "node src/benchmark.mjs",
     "test:iframe-session:e2e": "node test/iframe-session.e2e.mjs",
     "test:discovery-public:e2e": "node test/discovery-public.e2e.mjs",
-    "test:webreel:e2e": "node test/webreel-benchmark.e2e.mjs"
+    "test:webreel:e2e": "node test/webreel-benchmark.e2e.mjs",
+    "test:cloud:docker": "node test/cloud-egress-docker.mjs"
   },
   "keywords": [],
   "author": "",

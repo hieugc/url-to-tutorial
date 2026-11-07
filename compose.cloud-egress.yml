@@ -1,0 +1,28 @@
+services:
+  egress-proxy:
+    image: ${TUTORIAL_EGRESS_PROXY_IMAGE:?Set a prebuilt egress proxy image; use an immutable digest in production}
+    container_name: url-tutorial-egress-proxy
+    environment:
+      EGRESS_PROXY_HOST: 0.0.0.0
+      EGRESS_PROXY_PORT: "3128"
+      EGRESS_PROXY_MAX_CONNECTIONS: "64"
+    expose:
+      - "3128"
+    networks:
+      - internet_egress
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.50
+    restart: unless-stopped
+
+networks:
+  internet_egress:
+    name: url-tutorial-egress
+    driver: bridge
