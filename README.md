@@ -58,7 +58,7 @@ Plans may explicitly address one visible iframe and a unique element inside it:
 }
 ```
 
-The renderer verifies that the iframe selector matches exactly one visible frame. It draws the spotlight/popover in the top document using the iframe element's main-page bounding box. Privacy masking and OTP/MFA/CAPTCHA detection inspect all attached frames, including cross-origin frames. Popups/new tabs remain unsupported.
+The renderer verifies that the iframe selector matches exactly one visible frame and that the inner CSS/role locator matches exactly one target. The spotlight/popover is drawn in the top document at the inner target's main-page bounding box. Explicitly reviewed `click` and `fill` actions can run against that target; unreviewed actions fail before the site is opened. The document-start privacy mask and OTP/MFA/CAPTCHA checks inspect all attached frames, including cross-origin frames. A fixture E2E verifies that a filled iframe input and its placeholder stay transparent in the capture, the value is absent from the report, and the reviewed click executes once. Popups/new tabs remain unsupported.
 
 ### Explicit manual login (CLI only)
 
