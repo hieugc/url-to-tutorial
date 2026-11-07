@@ -112,7 +112,7 @@ async function authorize(operatorAuthenticator, context, action) {
       typeof identity.actorId !== 'string' || !OPERATOR_ID.test(identity.actorId)) {
     throw new Error('Cloud credential rollout requires an MFA-verified operator');
   }
-  return identity;
+  return Object.freeze({ actorId: identity.actorId, mfaVerified: true });
 }
 
 function validateReplicaList(replicas) {
@@ -321,6 +321,7 @@ export async function runCloudCredentialRollout({
       await replica.reloadTokens(assertion, {
         expectedVersion: snapshot.version,
         rolloutId: id,
+        replicaId: replica.id,
       });
       const current = await replica.status();
       if (!statusMatches(current, snapshot)) {
