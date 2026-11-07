@@ -505,12 +505,19 @@ export class StudioJobStore {
     if (createHash('sha256').update(resolved).digest('hex').slice(0, 16) !== keyId) {
       throw new TypeError('New audit key ID must match the SHA-256 key fingerprint');
     }
-    if (this.auditKeys.has(keyId)) throw new Error('Audit key ID already exists; rotation requires a new key ID');
+    if (keyId === this.activeAuditKeyId) {
+      throw new Error('Audit signing key is already active');
+    }
+    const existingKey = this.auditKeys.get(keyId);
+    if (existingKey && (existingKey.length !== resolved.length || !timingSafeEqual(existingKey, resolved))) {
+      throw new Error('Audit key ID is already bound to a different key');
+    }
     if (typeof actorId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.@-]{1,63}$/.test(actorId)) {
       throw new TypeError('Audit key rotation actorId is invalid');
     }
     const previousKeyId = this.activeAuditKeyId;
-    this.auditKeys.set(keyId, resolved);
+    const addedKey = !existingKey;
+    if (addedKey) this.auditKeys.set(keyId, resolved);
     this.activeAuditKeyId = keyId;
     this.auditKey = resolved;
     try {
@@ -519,7 +526,7 @@ export class StudioJobStore {
         details: { previousKeyId, activeKeyId: keyId },
       });
     } catch (error) {
-      this.auditKeys.delete(keyId);
+      if (addedKey) this.auditKeys.delete(keyId);
       this.activeAuditKeyId = previousKeyId;
       this.auditKey = this.auditKeys.get(previousKeyId);
       throw error;
