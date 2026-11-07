@@ -34,7 +34,7 @@ npm run benchmark -- output/playwright.mp4 output/webreel.mp4 output/comparison.
 
 An optional Webreel A/B harness is described below. File metrics do not establish true browser-rendering FPS or Mac CPU/RAM use; visual and hardware acceptance remain open.
 
-**UTV-009 – Cloud API not enabled.** `src/cloud-egress.mjs` has a public URL/DNS preflight helper and tests but is **not** a complete SSRF defense. Redirects, browser subrequests and DNS rebinding require real network egress isolation in a separate worker. Current Studio only binds to 127.0.0.1 without public auth, tenant isolation or billing. **Do not expose it on the internet.** See [security design](docs/CLOUD-SECURITY.md).
+**UTV-009 – Cloud API not deployed.** The opt-in server factory now has tenant/project auth and quotas; a one-shot Docker worker runs on a per-job `--internal` network, with outbound HTTPS available only through a DNS-pinned CONNECT proxy. Worker images are digest-pinned, non-root, read-only and resource-limited; cloud render accepts read-only plans only. Linux CI includes a real Docker-network test proving direct egress is blocked and proxied public HTTPS works. This is still **not a public SaaS deployment**: token lifecycle, durable rate limits, billing, audit, TLS proxy deployment, operational cleanup and independent security acceptance remain open. The default CLI remains loopback-only. **Do not expose it on the internet.** See [security design](docs/CLOUD-SECURITY.md).
 
 ## Follow-up implementation — cancellation, iframe and authenticated walkthroughs
 
