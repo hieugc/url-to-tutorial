@@ -127,3 +127,123 @@ test('Manual login session is transferred in memory only and requires visible co
     await new Promise(resolve => site.server.close(resolve));
   }
 });
+
+
+test('Reviewed fill and click actions work inside a cross-origin iframe while field values stay masked', async () => {
+  let parentLoads = 0;
+  let childLoads = 0;
+  let clickCount = 0;
+  const maskSnapshots = [];
+  const child = await start((req, res) => {
+    if (req.url.startsWith('/mask-check?')) {
+      const url = new URL(req.url, 'http://127.0.0.1');
+      maskSnapshots.push({
+        redacted: url.searchParams.get('redacted'),
+        color: url.searchParams.get('color'),
+        placeholderColor: url.searchParams.get('placeholderColor'),
+        placeholderOpacity: url.searchParams.get('placeholderOpacity'),
+      });
+      res.writeHead(204).end();
+      return;
+    }
+    if (req.url === '/clicked') {
+      clickCount++;
+      res.writeHead(204).end();
+      return;
+    }
+    childLoads++;
+    send(res, '<!doctype html><html><body>' +
+      '<input id="secret" type="text" autocomplete="email" placeholder="PRIVATE_IFRAME_PLACEHOLDER">' +
+      '<button id="confirm" type="button">Save details</button>' +
+      '<p id="result">Not saved</p>' +
+      '<script>' +
+      'const field=document.querySelector("#secret");' +
+      'const recordMask=()=>{' +
+      'const style=getComputedStyle(field);const placeholder=getComputedStyle(field,"::placeholder");' +
+      'const query=new URLSearchParams({' +
+      'redacted:String(field.hasAttribute("data-tutorial-redacted")),' +
+      'color:style.color,placeholderColor:placeholder.color,placeholderOpacity:placeholder.opacity});' +
+      'fetch("/mask-check?"+query.toString(),{cache:"no-store"});};' +
+      'document.addEventListener("DOMContentLoaded",recordMask,{once:true});' +
+      'field.addEventListener("input",recordMask);' +
+      'document.querySelector("#confirm").addEventListener("click",()=>{' +
+      'document.querySelector("#result").textContent="Saved safely";fetch("/clicked");});' +
+      '</script></body></html>');
+  });
+  const parent = await start((_req, res) => {
+    parentLoads++;
+    send(res, '<!doctype html><html><body><h1>Parent application</h1>' +
+      '<iframe id="details" title="Cross-origin details" ' +
+      'style="width:700px;height:260px;border:0" src="' + child.url + '"></iframe>' +
+      '</body></html>');
+  });
+  const root = await mkdtemp(path.join(tmpdir(), 'utv-iframe-actions-'));
+  const secret = 'PRIVATE_IFRAME_VALUE_MUST_NOT_APPEAR';
+  const frame = { frame: { css: 'iframe#details' } };
+
+  try {
+    const unreviewed = {
+      schemaVersion: 1, title: 'Unreviewed iframe action', url: parent.url, language: 'en',
+      steps: [
+        { id: 'click', title: 'Save', description: 'This action is not approved.',
+          target: { ...frame, target: { css: '#confirm' } },
+          action: 'click', reviewed: false, holdMs: 500 },
+        { id: 'stop', title: 'Done', description: 'Stop.', action: 'stop', holdMs: 500 },
+      ],
+    };
+    await assert.rejects(
+      render(unreviewed, { outDir: path.join(root, 'unreviewed') }),
+      /must be reviewed before execution/,
+    );
+    assert.equal(parentLoads, 0, 'Unreviewed iframe actions must fail before opening the site');
+    assert.equal(childLoads, 0);
+    assert.equal(clickCount, 0);
+
+    const plan = Plan.parse({
+      schemaVersion: 1, title: 'Reviewed cross-origin iframe actions',
+      url: parent.url, language: 'en',
+      steps: [
+        { id: 'fill', title: 'Enter details', description: 'Fill the explicitly approved field.',
+          target: { ...frame, target: { css: '#secret' } },
+          action: 'fill', value: secret, reviewed: true, holdMs: 500 },
+        { id: 'click', title: 'Save details', description: 'Click the explicitly approved button.',
+          target: { ...frame, target: { role: 'button', name: 'Save details' } },
+          action: 'click', reviewed: true, holdMs: 500 },
+        { id: 'result', title: 'Confirm saved', description: 'The embedded page confirms the action.',
+          target: { ...frame, target: { css: '#result' } },
+          action: 'highlight', holdMs: 500 },
+        { id: 'stop', title: 'Done', description: 'End of the embedded workflow.',
+          action: 'stop', holdMs: 500 },
+      ],
+    });
+    const result = await render(plan, { outDir: path.join(root, 'reviewed') });
+    assert.equal(result.status, 'completed');
+    assert.equal(result.executedStepCount, 4);
+    assert.equal(result.video.codec, 'h264');
+    assert.equal(parentLoads, 1);
+    assert.equal(childLoads, 1);
+    assert.equal(clickCount, 1, 'The reviewed click must reach the embedded fixture exactly once');
+
+    // Wait for the fixture's asynchronous privacy telemetry to reach the server.
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.ok(maskSnapshots.length >= 2, 'Mask state must be checked before and after filling');
+    for (const snapshot of maskSnapshots) {
+      assert.equal(snapshot.redacted, 'true', 'The field must carry the privacy marker inside the iframe');
+      assert.match(snapshot.color, /rgba\\(0, 0, 0, 0\\)/, 'Input text must be transparent');
+      assert.match(snapshot.placeholderColor, /rgba\\(0, 0, 0, 0\\)/, 'Placeholder text must be transparent');
+      assert.equal(snapshot.placeholderOpacity, '0');
+    }
+
+    await access(path.join(root, 'reviewed', 'step-2.png'));
+    await access(path.join(root, 'reviewed', 'tutorial.mp4'));
+    const report = await readFile(path.join(root, 'reviewed', 'report.json'), 'utf8');
+    assert.equal(report.includes(secret), false, 'Filled values must never enter the public render report');
+    assert.equal(report.includes('PRIVATE_IFRAME_PLACEHOLDER'), false);
+  } finally {
+    parent.server.closeAllConnections(); child.server.closeAllConnections();
+    await Promise.all([
+      new Promise(resolve => parent.server.close(resolve)),
+      new Promise(resolve => child.server.close(resolve)),
+    ]);
+  }
+});
