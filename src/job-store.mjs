@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 
@@ -9,14 +9,41 @@ const EMPTY_AUDIT_HASH = '0'.repeat(64);
 const terminal = job => ['completed', 'failed', 'cancelled', 'interrupted'].includes(job.status);
 
 export class StudioJobStore {
-  constructor(outputRoot, { auditKey = null } = {}) {
-    if (auditKey !== null && typeof auditKey !== 'string' && !Buffer.isBuffer(auditKey)) {
-      throw new TypeError('Cloud audit signing key must be a string or Buffer');
+  constructor(outputRoot, { auditKey = null, auditKeyRing = null } = {}) {
+    if (auditKey !== null && auditKeyRing !== null) {
+      throw new TypeError('Configure either auditKey or auditKeyRing, not both');
     }
-    const resolvedAuditKey = auditKey === null ? null : Buffer.from(auditKey);
-    if (resolvedAuditKey && resolvedAuditKey.length < 32) {
-      throw new TypeError('Cloud audit signing key must contain at least 32 bytes');
+    this.auditKeys = new Map();
+    this.activeAuditKeyId = null;
+    if (auditKeyRing !== null) {
+      if (!auditKeyRing || typeof auditKeyRing !== 'object' ||
+          !/^[a-f0-9]{16}$/.test(auditKeyRing.activeKeyId || '') ||
+          !auditKeyRing.keys || typeof auditKeyRing.keys !== 'object' || Array.isArray(auditKeyRing.keys)) {
+        throw new TypeError('Cloud audit key ring requires activeKeyId and a keys object');
+      }
+      for (const [keyId, value] of Object.entries(auditKeyRing.keys)) {
+        if (!/^[a-f0-9]{16}$/.test(keyId) ||
+            (typeof value !== 'string' && !Buffer.isBuffer(value))) {
+          throw new TypeError('Cloud audit key ring entries require 16-hex IDs and string/Buffer keys');
+        }
+        const key = Buffer.from(value);
+        if (key.length < 32) throw new TypeError('Cloud audit keys must contain at least 32 bytes');
+        this.auditKeys.set(keyId, key);
+      }
+      if (!this.auditKeys.has(auditKeyRing.activeKeyId)) {
+        throw new TypeError('Active cloud audit key is missing from the key ring');
+      }
+      this.activeAuditKeyId = auditKeyRing.activeKeyId;
+    } else if (auditKey !== null) {
+      if (typeof auditKey !== 'string' && !Buffer.isBuffer(auditKey)) {
+        throw new TypeError('Cloud audit signing key must be a string or Buffer');
+      }
+      const key = Buffer.from(auditKey);
+      if (key.length < 32) throw new TypeError('Cloud audit signing key must contain at least 32 bytes');
+      this.activeAuditKeyId = createHash('sha256').update(key).digest('hex').slice(0, 16);
+      this.auditKeys.set(this.activeAuditKeyId, key);
     }
+    this.auditKey = this.activeAuditKeyId ? this.auditKeys.get(this.activeAuditKeyId) : null;
     const root = path.resolve(outputRoot);
     mkdirSync(root, { recursive: true });
     this.db = new DatabaseSync(path.join(root, 'studio-jobs.sqlite'));
@@ -51,10 +78,10 @@ export class StudioJobStore {
     this.db.exec('CREATE TABLE IF NOT EXISTS cloud_audit_events (' +
       'event_id TEXT PRIMARY KEY, sequence INTEGER, previous_hash TEXT, event_hash TEXT, ' +
       'tenant_id TEXT NOT NULL, project_id TEXT, principal_id TEXT, action TEXT NOT NULL, ' +
-      'resource_id TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT)');
+      'resource_id TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT, key_id TEXT)');
     const auditColumns = new Set(this.db.prepare('PRAGMA table_info(cloud_audit_events)')
       .all().map(column => column.name));
-    for (const [name, type] of [['sequence', 'INTEGER'], ['previous_hash', 'TEXT'], ['event_hash', 'TEXT']]) {
+    for (const [name, type] of [['sequence', 'INTEGER'], ['previous_hash', 'TEXT'], ['event_hash', 'TEXT'], ['key_id', 'TEXT']]) {
       if (!auditColumns.has(name)) this.db.exec('ALTER TABLE cloud_audit_events ADD COLUMN ' + name + ' ' + type);
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS cloud_audit_events_tenant_time ' +
@@ -110,10 +137,10 @@ export class StudioJobStore {
     this.deleteCloudStorageUsageStatement = this.db.prepare(
       'DELETE FROM cloud_storage_usage WHERE job_id=?');
     this.insertCloudAuditStatement = this.db.prepare(
-      'INSERT INTO cloud_audit_events (event_id, sequence, previous_hash, event_hash, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      'INSERT INTO cloud_audit_events (event_id, sequence, previous_hash, event_hash, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details, key_id) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     this.listCloudAuditStatement = this.db.prepare(
-      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, ' +
+      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, key_id AS keyId, ' +
       'tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, ' +
       'action, resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
       'FROM cloud_audit_events WHERE tenant_id=? ORDER BY sequence, rowid');
@@ -123,7 +150,7 @@ export class StudioJobStore {
       'SELECT last_archived_sequence AS lastArchivedSequence, last_archived_hash AS lastArchivedHash ' +
       'FROM cloud_audit_archive_state WHERE id=1');
     this.auditArchiveBatchStatement = this.db.prepare(
-      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, ' +
+      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, key_id AS keyId, ' +
       'tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, action, ' +
       'resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
       'FROM cloud_audit_events WHERE sequence>? ORDER BY sequence LIMIT ?');
@@ -134,18 +161,18 @@ export class StudioJobStore {
     this.updateAuditStateStatement = this.db.prepare(
       'UPDATE cloud_audit_state SET last_sequence=?, last_hash=? WHERE id=1');
     this.auditRowsStatement = this.db.prepare(
-      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, ' +
+      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, key_id AS keyId, ' +
       'tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, action, ' +
       'resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
       'FROM cloud_audit_events ORDER BY sequence, rowid');
     this.legacyAuditRowsStatement = this.db.prepare(
       'SELECT event_id AS eventId, tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, ' +
-      'action, resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
+      'action, resource_id AS resourceId, outcome, created_at AS createdAt, details, key_id AS keyId ' +
       'FROM cloud_audit_events ORDER BY rowid');
     this.updateAuditRowStatement = this.db.prepare(
-      'UPDATE cloud_audit_events SET sequence=?, previous_hash=?, event_hash=? WHERE event_id=?');
+      'UPDATE cloud_audit_events SET sequence=?, previous_hash=?, event_hash=?, key_id=? WHERE event_id=?');
     this.deleteStatement = this.db.prepare('DELETE FROM studio_jobs WHERE id=?');
-    if (this.auditKey) {
+    if (this.auditKeys.size > 0) {
       try {
         this.initializeAuditChain();
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS cloud_audit_events_sequence ON cloud_audit_events(sequence)');
