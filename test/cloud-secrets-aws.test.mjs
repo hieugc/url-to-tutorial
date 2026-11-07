@@ -93,6 +93,7 @@ test('rejects missing, ambiguous, oversized and malformed AWS secret values', as
     ['invalid JSON', { SecretString: '{invalid-json' }, /not valid JSON/],
     ['empty value', { SecretString: '' }, /between 1 byte and 64 KiB/],
     ['oversized value', { SecretString: 'x'.repeat(64 * 1024 + 1) }, /between 1 byte and 64 KiB/],
+    ['oversized binary', { SecretBinary: new Uint8Array(64 * 1024 + 1) }, /between 1 byte and 64 KiB/],
     ['unsupported binary', { SecretBinary: 'not-a-byte-array' }, /unsupported binary/],
   ];
   for (const [name, response, expected] of cases) {
