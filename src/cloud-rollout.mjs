@@ -198,6 +198,14 @@ function validateStore(store) {
   ]) requireFunction(store, method);
 }
 
+function validateLease(result) {
+  if (!result || typeof result.leaseToken !== 'string' ||
+      result.leaseToken.length < 16 || result.leaseToken.length > 1024) {
+    throw new Error('Durable rollout store did not issue a valid fencing token');
+  }
+  return result.leaseToken;
+}
+
 /**
  * Coordinates one immutable secret revision across a fixed set of API replicas.
  *
@@ -273,26 +281,26 @@ export async function runCloudCredentialRollout({
   }
 
   const id = rolloutId ?? randomUUID();
+  let leaseToken;
   if (!previousRecord) {
     try {
-      await rolloutStore.beginRollout({
+      leaseToken = validateLease(await rolloutStore.beginRollout({
         rolloutId: id,
         targetVersion: snapshot.version,
         snapshotDigest: snapshot.snapshotDigest,
         actorId: identity.actorId,
         replicaIds,
-      });
+      }));
     } catch {
       throw new Error('Credential rollout could not acquire its durable rollout record');
     }
   } else {
     try {
-      // The store must atomically claim the expired/released partial rollout so
-      // two operators cannot resume and mutate the same replicas concurrently.
-      await rolloutStore.resumeRollout({
+      // A new fencing token invalidates any stale coordinator from an expired lease.
+      leaseToken = validateLease(await rolloutStore.resumeRollout({
         rolloutId: id,
         actorId: identity.actorId,
-      });
+      }));
     } catch {
       throw new Error('Credential rollout is already leased or cannot be resumed');
     }
@@ -353,6 +361,7 @@ export async function runCloudCredentialRollout({
       try {
         await rolloutStore.recordReplicaAck({
           rolloutId: id,
+          leaseToken,
           replicaId: replica.id,
           targetVersion: snapshot.version,
           actorId: identity.actorId,
@@ -370,6 +379,7 @@ export async function runCloudCredentialRollout({
       try {
         await rolloutStore.recordReplicaFailure({
           rolloutId: id,
+          leaseToken,
           replicaId: replica.id,
           targetVersion: snapshot.version,
           actorId: identity.actorId,
@@ -393,6 +403,7 @@ export async function runCloudCredentialRollout({
     try {
       await rolloutStore.markPartialRollout({
         rolloutId: id,
+        leaseToken,
         targetVersion: snapshot.version,
         acknowledgedReplicaIds,
         failedReplicaIds,
@@ -414,6 +425,7 @@ export async function runCloudCredentialRollout({
   try {
     await rolloutStore.completeRollout({
       rolloutId: id,
+      leaseToken,
       targetVersion: snapshot.version,
       replicaIds,
       actorId: identity.actorId,
