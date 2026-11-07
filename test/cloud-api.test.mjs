@@ -5,6 +5,7 @@ import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCloudAuth } from '../src/cloud-auth.mjs';
+import { StudioJobStore } from '../src/job-store.mjs';
 import { createStudioServer } from '../src/studio-server.mjs';
 
 const tokenA = 'tenant-a-secret-token-0123456789abcdef';
@@ -74,6 +75,7 @@ function serverOptions(outputRoot, overrides = {}) {
   return {
     outputRoot, cloudMode: true, cloudTokens: tokens,
     cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true,
+    cloudAuditKey: 'test-only-cloud-audit-signing-key-0123456789abcdef',
     cloudPreflight: async value => {
       const target = new URL(value);
       if (target.protocol !== 'https:' || ['localhost', '127.0.0.1',
@@ -101,6 +103,10 @@ test('Cloud API authenticates every tenant route and enforces project-scoped job
   assert.throws(() => createStudioServer({ cloudMode: true, cloudTokens: tokens,
     cloudAllowedHosts: ['api.example.test'], cloudWorker: async () => result }),
   /trusted TLS-terminating reverse proxy/);
+  assert.throws(() => createStudioServer({ cloudMode: true, cloudTokens: tokens,
+    cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true,
+    cloudWorker: async () => result }),
+  /audit signing key/);
   assert.throws(() => createStudioServer({ cloudMode: true, cloudTokens: tokens,
     cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true }),
   /isolated-worker adapter/);
@@ -527,4 +533,81 @@ test('Cloud token administration is in-process only, audited and secret-free', a
   assert.ok(audit.every(event => event.principalId === 'ops-user'));
   const serialized = JSON.stringify(audit);
   for (const secret of [tokenA, tokenB, rotatedToken]) assert.ok(!serialized.includes(secret));
+});
+
+
+test('Cloud audit HMAC chain migrates legacy rows, verifies across restart and detects tampering', async t => {
+  const root = await temp();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const auditKey = 'test-only-cloud-audit-signing-key-0123456789abcdef';
+  const legacy = new StudioJobStore(root);
+  legacy.db.exec('DROP TABLE cloud_audit_events');
+  legacy.db.exec('CREATE TABLE cloud_audit_events (' +
+    'event_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, project_id TEXT, principal_id TEXT, ' +
+    'action TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT)');
+  legacy.db.exec('CREATE INDEX cloud_audit_events_tenant_time ON cloud_audit_events(tenant_id, created_at)');
+  legacy.db.exec('DROP TABLE cloud_audit_state');
+  legacy.db.prepare(
+    'INSERT INTO cloud_audit_events (event_id, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run('legacy-event-1', 'tenant-a', 'project-a', 'ops-user',
+    'job.submitted', 'job-1', 'success', '2026-11-06T12:00:00.000Z', JSON.stringify({ jobType: 'discover' }));
+  legacy.close();
+
+  const signed = new StudioJobStore(root, { auditKey });
+  assert.deepEqual(signed.verifyCloudAuditChain().valid, true);
+  assert.equal(signed.verifyCloudAuditChain().count, 1, 'Legacy events are backfilled once');
+  signed.recordCloudAudit({
+    tenantId: 'tenant-a', projectId: 'project-a', principalId: 'ops-user',
+    action: 'job.completed', resourceId: 'job-1', details: { status: 'completed' },
+  });
+  const valid = signed.verifyCloudAuditChain();
+  assert.equal(valid.valid, true);
+  assert.equal(valid.count, 2);
+  assert.equal(signed.cloudAuditEvents('tenant-a').length, 2);
+  signed.close();
+
+  const reopened = new StudioJobStore(root, { auditKey });
+  assert.equal(reopened.verifyCloudAuditChain().valid, true, 'Chain remains verifiable after restart');
+  const first = reopened.db.prepare(
+    'SELECT event_id AS eventId FROM cloud_audit_events ORDER BY sequence LIMIT 1',
+  ).get();
+  reopened.db.prepare('UPDATE cloud_audit_events SET details=? WHERE event_id=?')
+    .run(JSON.stringify({ altered: true }), first.eventId);
+  const tampered = reopened.verifyCloudAuditChain();
+  assert.equal(tampered.valid, false);
+  assert.match(tampered.reason, /signature/);
+  reopened.close();
+
+  assert.throws(() => new StudioJobStore(root, {
+    auditKey: 'wrong-audit-signing-key-0123456789abcdef',
+  }), /integrity verification failed/);
+});
+
+test('Cloud mode refuses to start without a stable audit signing secret', async t => {
+  const root = await temp();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  assert.throws(() => createStudioServer(serverOptions(root, { cloudAuditKey: null })),
+    /stable 32-byte audit signing key/);
+  assert.throws(() => createStudioServer(serverOptions(root, {
+    cloudAuditKey: 'too-short',
+  })), /stable 32-byte audit signing key/);
+});
+
+test('Cloud API audit chain verifies token and job events on the active store', async t => {
+  const root = await temp();
+  const studio = createStudioServer(serverOptions(root));
+  const origin = await listen(studio.server);
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+  assert.equal((await call(origin, '/api/jobs', {
+    token: tokenA, projectId: 'project-a',
+  })).status, 200);
+  assert.equal((await call(origin, '/api/jobs', {
+    token: tokenA, projectId: 'project-b',
+  })).status, 403);
+  assert.equal(studio.store.verifyCloudAuditChain().valid, true);
+  assert.equal(studio.store.cloudAuditEvents('tenant-a')[0].action, 'project.access_denied');
 });
