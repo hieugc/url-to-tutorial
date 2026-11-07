@@ -5,8 +5,7 @@ const OPERATOR_ID = /^[A-Za-z0-9][A-Za-z0-9_.@-]{1,63}$/;
 
 function validateSecretSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot) ||
-      typeof snapshot.version !== 'string' || !snapshot.version.trim() ||
-      snapshot.version.length > 256) {
+      typeof snapshot.version !== 'string' || !/^(0|[1-9][0-9]{0,127})$/.test(snapshot.version)) {
     throw new TypeError('Secret manager must return a non-empty versioned cloud secret snapshot');
   }
   if (!Array.isArray(snapshot.tokens) || snapshot.tokens.length === 0) {
@@ -123,8 +122,9 @@ export async function createCloudStudioFromSecretManager({
 
   let secretVersion = snapshot.version;
   let tokenDigest = initialTokenDigest;
-  let keyRingDigest = initialAuditKeyRing.keyMaterialDigest;
+  const keyRingDigest = initialAuditKeyRing.keyMaterialDigest;
   let tokenMetadata = studio.tokenAdmin.list();
+  let reloadInFlight = false;
 
   function status() {
     return Object.freeze({
@@ -136,29 +136,38 @@ export async function createCloudStudioFromSecretManager({
   }
 
   async function reloadTokens(context) {
-    const actorId = await authorizeOperator(
-      operatorAuthenticator, context, 'cloud.credentials.reload',
-    );
-    const next = validateSecretSnapshot(await secretManager.readCloudSecrets());
-    const nextRing = auditKeyRingMetadata(next.auditKeyRing);
-    if (nextRing.activeKeyId !== initialAuditKeyRing.activeKeyId ||
-        JSON.stringify([...nextRing.keyIds].sort()) !== JSON.stringify(initialAuditKeyRing.keyIds) ||
-        nextRing.keyMaterialDigest !== keyRingDigest) {
-      throw new Error('Audit key ring changes require the separate staged key-rotation workflow');
-    }
+    if (reloadInFlight) throw new Error('A cloud credential reload is already in progress');
+    reloadInFlight = true;
+    try {
+      const actorId = await authorizeOperator(
+        operatorAuthenticator, context, 'cloud.credentials.reload',
+      );
+      const next = validateSecretSnapshot(await secretManager.readCloudSecrets());
+      if (BigInt(next.version) < BigInt(secretVersion)) {
+        throw new Error('Secret manager returned an older snapshot revision; refusing credential rollback');
+      }
+      const nextRing = auditKeyRingMetadata(next.auditKeyRing);
+      if (nextRing.activeKeyId !== initialAuditKeyRing.activeKeyId ||
+          JSON.stringify([...nextRing.keyIds].sort()) !== JSON.stringify(initialAuditKeyRing.keyIds) ||
+          nextRing.keyMaterialDigest !== keyRingDigest) {
+        throw new Error('Audit key ring changes require the separate staged key-rotation workflow');
+      }
 
-    const nextTokenDigest = digestTokens(next.tokens);
-    if (next.version === secretVersion && nextTokenDigest !== tokenDigest) {
-      throw new Error('Secret manager changed credentials without advancing the snapshot version');
+      const nextTokenDigest = digestTokens(next.tokens);
+      if (next.version === secretVersion && nextTokenDigest !== tokenDigest) {
+        throw new Error('Secret manager changed credentials without advancing the snapshot version');
+      }
+      if (nextTokenDigest !== tokenDigest) {
+        // replace() writes the operator audit event before swapping the in-memory
+        // registry, so a failed SQLite audit append leaves active credentials intact.
+        tokenMetadata = studio.tokenAdmin.replace(next.tokens, { actorId });
+        tokenDigest = nextTokenDigest;
+      }
+      secretVersion = next.version;
+      return status();
+    } finally {
+      reloadInFlight = false;
     }
-    if (nextTokenDigest !== tokenDigest) {
-      // replace() writes the operator audit event before swapping the in-memory
-      // registry, so a failed SQLite audit append leaves active credentials intact.
-      tokenMetadata = studio.tokenAdmin.replace(next.tokens, { actorId });
-      tokenDigest = nextTokenDigest;
-    }
-    secretVersion = next.version;
-    return status();
   }
 
   return Object.freeze({
