@@ -83,6 +83,15 @@ function fakeAws(initial = snapshot('41', tokenA), options = {}) {
           versionIdsToStages[versionId] ??= [];
           versionIdsToStages[versionId].push(stage);
         }
+        if (options.currentStageAssignments === 0) {
+          for (const stages of Object.values(versionIdsToStages)) {
+            const index = stages.indexOf('AWSCURRENT');
+            if (index >= 0) stages.splice(index, 1);
+          }
+        } else if (options.currentStageAssignments === 2) {
+          versionIdsToStages['aws-version-40'] ??= [];
+          versionIdsToStages['aws-version-40'].push('AWSCURRENT');
+        }
         return { VersionIdsToStages: versionIdsToStages };
       }
       if (command instanceof PutSecretValueCommand) {
@@ -226,10 +235,10 @@ test('refuses to reuse a revision stage already attached to any AWS version', as
 });
 
 test('fails closed when AWS reports zero or multiple AWSCURRENT stage assignments', async () => {
-  for (const mode of ['zero', 'multiple']) {
-    const { publisher, calls, stages } = fakeAws();
-    if (mode === 'zero') stages.delete('AWSCURRENT');
-    else stages.set('AWSCURRENT', '40');
+  for (const assignments of [0, 2]) {
+    const { publisher, calls } = fakeAws(snapshot('41', tokenA), {
+      currentStageAssignments: assignments,
+    });
     await assert.rejects(publisher.publishCloudSecretSnapshot({
       snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
       expectedCurrentVersion: '41',
