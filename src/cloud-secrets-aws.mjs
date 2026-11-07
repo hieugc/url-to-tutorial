@@ -235,13 +235,15 @@ function sameCloudSnapshot(left, right) {
 export function createAwsSecretsManagerPublisher({
   client,
   GetSecretValueCommand,
+  DescribeSecretCommand,
   PutSecretValueCommand,
   secretId,
   publishLock,
 } = {}) {
   if (!client || typeof client.send !== 'function' ||
+      typeof DescribeSecretCommand !== 'function' ||
       typeof PutSecretValueCommand !== 'function') {
-    throw new TypeError('AWS Secrets Manager publisher requires an SDK client and PutSecretValueCommand');
+    throw new TypeError('AWS Secrets Manager publisher requires an SDK client, DescribeSecretCommand and PutSecretValueCommand');
   }
   if (!publishLock || typeof publishLock.withLock !== 'function') {
     throw new TypeError('AWS secret publishing requires a durable distributed publishLock');
@@ -312,6 +314,25 @@ export function createAwsSecretsManagerPublisher({
         }
 
         await assertPublishLease(lease);
+        let description;
+        try {
+          description = await client.send(new DescribeSecretCommand({ SecretId: id }));
+        } catch {
+          throw new Error('AWS secret version-stage inspection failed');
+        }
+        const versionStages = description?.VersionIdsToStages;
+        if (!versionStages || typeof versionStages !== 'object' || Array.isArray(versionStages)) {
+          throw new Error('AWS secret version-stage metadata is unavailable');
+        }
+        const attachedStages = Object.values(versionStages).filter(Array.isArray).flat();
+        if (attachedStages.filter(stage => stage === 'AWSCURRENT').length !== 1) {
+          throw new Error('AWS secret must have exactly one AWSCURRENT stage');
+        }
+        if (attachedStages.includes(customStage)) {
+          throw new Error('AWS immutable revision stage already exists; refusing to move it');
+        }
+
+        await assertPublishLease(lease);
         let response;
         try {
           response = await client.send(new PutSecretValueCommand({
@@ -375,6 +396,7 @@ export async function createDefaultAwsSecretsManagerPublisher({
   const publisher = createAwsSecretsManagerPublisher({
     client,
     GetSecretValueCommand: sdk.GetSecretValueCommand,
+    DescribeSecretCommand: sdk.DescribeSecretCommand,
     PutSecretValueCommand: sdk.PutSecretValueCommand,
     secretId: id,
     publishLock,
