@@ -10,6 +10,20 @@ Current Studio is a local operator-controlled service bound to 127.0.0.1. There 
 
 A deployment must attach the worker only to a private/internal network and give it a route to the internet solely through a separately managed egress proxy/firewall. The proxy must resolve and enforce destination IP policy at connection time, deny loopback/private/link-local/multicast/metadata destinations and unsafe ports, and be tested against redirect chains, DNS rebinding and iframe/subresource requests. No Cloud API is currently exposed and this hook is not production-ready.
 
+## Implemented control-plane slice (not deployment-ready)
+
+The local Studio factory now has an opt-in `cloudMode` for exercising the authenticated control-plane contract. It is not enabled by the CLI and does not change the default loopback-only Studio.
+
+- Requires an explicit allowlist of hostnames and configured bearer tokens. Each token must contain at least 32 characters and maps to a server-defined tenant plus an explicit list of project IDs.
+- Token digests (SHA-256) are held in memory; request tokens are compared in constant time. Raw bearer tokens are not returned by any API.
+- Every non-health API request requires `Authorization: Bearer …` and `X-Project-ID`. Tenant identity is derived only from the verified token; body-supplied tenant/project IDs are ignored.
+- Jobs persist their tenant/project scope. History, job details, retry, cancellation, assembly, screenshots, subtitles and video downloads are all scoped to the authenticated project; out-of-scope job IDs return 404.
+- Default per-tenant limits: 60 API requests/minute, 2 concurrent queued/running jobs, and 50 job submissions in a rolling 24-hour window. Limits are configurable in the server factory. The existing global queue cap and 512 KiB body cap remain in force.
+- Hosted AI generation is rejected in cloud mode until billing/cost controls exist. The local Studio UI is not served in cloud mode.
+- Regression tests cover missing/invalid credentials, Host/Origin allowlists, project/tenant isolation, spoofed body IDs, tenant-wide concurrency/daily quotas and independent rate limits.
+
+This slice is **control-plane authorization and admission control only**. Rate-limit counters are in memory and reset on restart. It does not provide token rotation/revocation APIs, durable billing/audit ledgers, TLS termination, a public deployment, a worker sandbox, or network egress enforcement. The CLI remains loopback-only. Do not expose or deploy this mode until the actual worker network namespace is restricted to a verified egress firewall/proxy and the remaining release gates below are met.
+
 ## Target architecture
 
 Browser-facing API (authenticated tenant/project) → throttled job queue → single-use browser worker in isolated container/microVM → restricted outbound egress proxy → artifact store with tenant ACL and time-limited signed URLs → cleanup worker.
