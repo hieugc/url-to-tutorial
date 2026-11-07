@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
-import { createReadStream, rmSync } from 'node:fs';
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { constants as fsConstants, rmSync } from 'node:fs';
+import { mkdir, readFile, lstat, open } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -107,6 +107,42 @@ function publicReport(report) {
   const copy = structuredClone(report);
   if (copy.video) delete copy.video.path;
   return copy;
+}
+
+async function openJobArtifact(outputRoot, jobId, filename, maxBytes) {
+  if (!/^[a-f0-9-]{36}$/i.test(jobId) || !/^[a-z0-9.-]+$/i.test(filename)) {
+    throw new Error('Invalid artifact identity');
+  }
+  const jobDir = path.join(path.resolve(outputRoot), jobId);
+  const directory = await lstat(jobDir);
+  if (!directory.isDirectory() || directory.isSymbolicLink()) {
+    throw new Error('Job output directory is not a real directory');
+  }
+  const file = path.join(jobDir, filename);
+  const handle = await open(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > maxBytes) {
+      throw new Error('Artifact is not a regular file or exceeds its size limit');
+    }
+    return { handle, info };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function readJobJson(outputRoot, jobId, filename, maxBytes = 2 * 1024 * 1024) {
+  const { handle } = await openJobArtifact(outputRoot, jobId, filename, maxBytes);
+  try { return JSON.parse(await handle.readFile({ encoding: 'utf8' })); }
+  finally { await handle.close(); }
+}
+
+function streamJobArtifact(res, opened, headers) {
+  res.writeHead(200, headers);
+  const stream = opened.handle.createReadStream();
+  stream.on('error', () => res.destroy());
+  return stream.pipe(res);
 }
 
 /**
@@ -317,8 +353,8 @@ export function createStudioServer({
         if (!job) return json(res, 404, { error: 'Unknown job' });
         let report = job.result?.report || job.result;
         if (!report && job.status === 'running' && job.type !== 'discover') {
-          try { report = JSON.parse(await readFile(path.join(job.outputDir, 'report.json'), 'utf8')); }
-          catch { /* not yet written */ }
+          try { report = await readJobJson(outputRoot, job.id, 'report.json'); }
+          catch { /* missing, symlinked, oversized or not yet written */ }
         }
         const data = { id: job.id, type: job.type, status: job.status,
           startedAt: job.startedAt, finishedAt: job.finishedAt, error: job.error,
@@ -351,13 +387,11 @@ export function createStudioServer({
         if (!job || job.status !== 'completed' || job.type !== 'render') {
           return json(res, 404, { error: 'Video is not ready' });
         }
-        const file = path.join(job.outputDir, 'tutorial.mp4');
-        let info;
-        try { info = await stat(file); }
-        catch { return json(res, 404, { error: 'MP4 missing' }); }
-        res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': info.size,
+        let opened;
+        try { opened = await openJobArtifact(outputRoot, job.id, 'tutorial.mp4', 1024 * 1024 * 1024); }
+        catch { return json(res, 404, { error: 'MP4 missing or unsafe' }); }
+        return streamJobArtifact(res, opened, { 'Content-Type': 'video/mp4', 'Content-Length': opened.info.size,
           'Content-Disposition': 'attachment; filename="tutorial.mp4"', 'Cache-Control': 'no-store' });
-        return createReadStream(file).pipe(res);
       }
 
       const subtitlesPath = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/subtitles\.(srt|vtt)$/i);
@@ -368,17 +402,15 @@ export function createStudioServer({
           return json(res, 404, { error: 'Narrated subtitles unavailable' });
         }
         const ext = subtitlesPath[2].toLowerCase();
-        const file = path.join(job.outputDir, 'tutorial.' + ext);
-        let info;
-        try { info = await stat(file); }
-        catch { return json(res, 404, { error: 'Subtitle file missing' }); }
-        res.writeHead(200, {
+        let opened;
+        try { opened = await openJobArtifact(outputRoot, job.id, 'tutorial.' + ext, 1024 * 1024); }
+        catch { return json(res, 404, { error: 'Subtitle file missing or unsafe' }); }
+        return streamJobArtifact(res, opened, {
           'Content-Type': ext === 'srt' ? 'application/x-subrip; charset=utf-8' : 'text/vtt; charset=utf-8',
-          'Content-Length': info.size,
+          'Content-Length': opened.info.size,
           'Content-Disposition': 'attachment; filename="tutorial.' + ext + '"',
           'Cache-Control': 'no-store',
         });
-        return createReadStream(file).pipe(res);
       }
 
       const imagePath = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/screenshot\/([1-5])$/i);
@@ -389,12 +421,11 @@ export function createStudioServer({
             !job.result.report.pages[index - 1]?.screenshot) {
           return json(res, 404, { error: 'Screenshot not found' });
         }
-        const file = path.join(job.outputDir, 'discovery-page-' + index + '.png');
-        let info;
-        try { info = await stat(file); }
-        catch { return json(res, 404, { error: 'Screenshot missing' }); }
-        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': info.size, 'Cache-Control': 'no-store' });
-        return createReadStream(file).pipe(res);
+        let opened;
+        try { opened = await openJobArtifact(outputRoot, job.id, 'discovery-page-' + index + '.png', 32 * 1024 * 1024); }
+        catch { return json(res, 404, { error: 'Screenshot missing or unsafe' }); }
+        return streamJobArtifact(res, opened, { 'Content-Type': 'image/png',
+          'Content-Length': opened.info.size, 'Cache-Control': 'no-store' });
       }
 
       const pricingImage = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/hostinger-screenshot$/i);
@@ -403,12 +434,11 @@ export function createStudioServer({
         if (!job || job.type !== 'hostinger' || job.status !== 'completed' || !job.result.report.screenshot) {
           return json(res, 404, { error: 'Hostinger pricing screenshot not found' });
         }
-        const file = path.join(job.outputDir, 'hostinger-pricing.png');
-        let info;
-        try { info = await stat(file); }
-        catch { return json(res, 404, { error: 'Pricing screenshot missing' }); }
-        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': info.size, 'Cache-Control': 'no-store' });
-        return createReadStream(file).pipe(res);
+        let opened;
+        try { opened = await openJobArtifact(outputRoot, job.id, 'hostinger-pricing.png', 32 * 1024 * 1024); }
+        catch { return json(res, 404, { error: 'Pricing screenshot missing or unsafe' }); }
+        return streamJobArtifact(res, opened, { 'Content-Type': 'image/png',
+          'Content-Length': opened.info.size, 'Cache-Control': 'no-store' });
       }
 
       const goalScreenshot = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/goal-screenshot$/i);
@@ -417,12 +447,11 @@ export function createStudioServer({
         if (!job || job.type !== 'goal' || job.status !== 'completed') {
           return json(res, 404, { error: 'Goal screenshot not found' });
         }
-        const file = path.join(job.outputDir, 'discovery-page-1.png');
-        let info;
-        try { info = await stat(file); }
-        catch { return json(res, 404, { error: 'Goal screenshot missing' }); }
-        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': info.size, 'Cache-Control': 'no-store' });
-        return createReadStream(file).pipe(res);
+        let opened;
+        try { opened = await openJobArtifact(outputRoot, job.id, 'discovery-page-1.png', 32 * 1024 * 1024); }
+        catch { return json(res, 404, { error: 'Goal screenshot missing or unsafe' }); }
+        return streamJobArtifact(res, opened, { 'Content-Type': 'image/png',
+          'Content-Length': opened.info.size, 'Cache-Control': 'no-store' });
       }
 
       if (req.method !== 'POST') return json(res, 404, { error: 'Unknown route' });
