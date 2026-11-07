@@ -170,9 +170,11 @@ export async function createCloudStudioFromSecretManager({
     }
   }
 
+  // Do not return the raw Studio object: it contains tokenAdmin, auditAdmin,
+  // SQLite handles and in-memory signing keys. Expose only the HTTP server and
+  // the MFA-gated reload/status capabilities.
   return Object.freeze({
     server: studio.server,
-    studio,
     status,
     reloadTokens,
   });
