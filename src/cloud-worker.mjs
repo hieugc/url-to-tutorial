@@ -48,7 +48,7 @@ export async function runCloudWorkerJob(payload, {
 } = {}) {
   if (!payload || typeof payload !== 'object' || !JOB_ID.test(payload.jobId || '') ||
       !ID.test(payload.tenantId || '') || !ID.test(payload.projectId || '') ||
-      !JOB_TYPES.has(payload.type) || !payload.request || typeof payload.request !== 'object') {
+      !JOB_TYPES.has(payload.type) || !payload.request || typeof payload.request !== 'object' || Array.isArray(payload.request)) {
     throw new Error('Invalid cloud worker job envelope');
   }
   if (!process.env.TUTORIAL_EGRESS_PROXY ||
