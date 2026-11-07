@@ -2,7 +2,7 @@
 
 ## Current state
 
-Current Studio is a local operator-controlled service bound to 127.0.0.1. There is **no** publicly exposed Cloud API, bearer authentication, billing, multi-tenant ACL or untrusted-user browser worker. The utility in src/cloud-egress.mjs is only a **DNS and URL preflight**, not an SSRF protection boundary. No release should claim UTV-009 DONE based on this file.
+Current Studio is a local operator-controlled service bound to 127.0.0.1. An opt-in, testable tenant-auth control-plane mode now exists in the server factory, but there is **no publicly exposed or CLI-enabled Cloud API**, no production token lifecycle, billing/audit ledger, deployed multi-tenant worker, or network isolation. The utility in src/cloud-egress.mjs is only a **DNS and URL preflight**, not an SSRF protection boundary. No release should claim UTV-009 DONE based on this code.
 
 ## Local egress-proxy integration hook
 
@@ -14,7 +14,8 @@ A deployment must attach the worker only to a private/internal network and give 
 
 The local Studio factory now has an opt-in `cloudMode` for exercising the authenticated control-plane contract. It is not enabled by the CLI and does not change the default loopback-only Studio.
 
-- Requires an explicit allowlist of hostnames and configured bearer tokens. Each token must contain at least 32 characters and maps to a server-defined tenant plus an explicit list of project IDs.
+- Requires an explicit allowlist of hostnames, a trusted TLS-terminating reverse proxy that strips/replaces `X-Forwarded-Proto`, and an injected isolated-worker adapter. Every request must carry `X-Forwarded-Proto: https`. The factory refuses cloud mode if the trusted-proxy or worker adapter is absent; local browser execution is not used by cloud-mode jobs.
+- Requires configured bearer tokens. Each token must contain at least 32 characters and maps to a server-defined tenant plus an explicit list of project IDs.
 - Token digests (SHA-256) are held in memory; request tokens are compared in constant time. Raw bearer tokens are not returned by any API.
 - Every non-health API request requires `Authorization: Bearer …` and `X-Project-ID`. Tenant identity is derived only from the verified token; body-supplied tenant/project IDs are ignored.
 - Jobs persist their tenant/project scope. History, job details, retry, cancellation, assembly, screenshots, subtitles and video downloads are all scoped to the authenticated project; out-of-scope job IDs return 404.
@@ -22,7 +23,7 @@ The local Studio factory now has an opt-in `cloudMode` for exercising the authen
 - Hosted AI generation is rejected in cloud mode until billing/cost controls exist. The local Studio UI is not served in cloud mode.
 - Regression tests cover missing/invalid credentials, Host/Origin allowlists, project/tenant isolation, spoofed body IDs, tenant-wide concurrency/daily quotas and independent rate limits.
 
-This slice is **control-plane authorization and admission control only**. Rate-limit counters are in memory and reset on restart. It does not provide token rotation/revocation APIs, durable billing/audit ledgers, TLS termination, a public deployment, a worker sandbox, or network egress enforcement. The CLI remains loopback-only. Do not expose or deploy this mode until the actual worker network namespace is restricted to a verified egress firewall/proxy and the remaining release gates below are met.
+This slice is **control-plane authorization and admission control only**. The worker adapter is an injection point, not an implementation of the isolated worker; tests use a harmless in-process fixture and no production adapter is supplied. Rate-limit counters are in memory and reset on restart. It does not provide token rotation/revocation APIs, durable billing/audit ledgers, TLS termination, a public deployment, a worker sandbox, or network egress enforcement. The CLI remains loopback-only. Do not expose or deploy this mode until the trusted proxy is deployed, the worker adapter forwards to a single-use isolated worker whose network namespace is restricted to a verified egress firewall/proxy, and the remaining release gates below are met.
 
 ## Target architecture
 
