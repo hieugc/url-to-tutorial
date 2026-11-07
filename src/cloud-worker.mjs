@@ -66,7 +66,7 @@ export async function runCloudWorkerJob(payload, {
   }
   if (payload.type === 'goal') {
     if (request.ai === true) throw new Error('Hosted AI is disabled in cloud workers');
-    const url = await assertPublicTarget(request.url);
+    const url = await assertPublicTarget(request.url, preflight);
     return goalImpl(url, {
       goal: request.goal, ai: false, outDir: OUTPUT_DIR, language: request.language, signal,
     });
