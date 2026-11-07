@@ -65,11 +65,25 @@ function auditKeyRingMetadata(ring) {
   });
 }
 
+async function readCloudSecrets(secretManager) {
+  try {
+    return await secretManager.readCloudSecrets();
+  } catch {
+    // Provider errors may contain request details; never forward them to callers.
+    throw new Error('Cloud secret manager read failed');
+  }
+}
+
 async function authorizeOperator(operatorAuthenticator, context, action) {
   if (!operatorAuthenticator || typeof operatorAuthenticator.authorize !== 'function') {
     throw new Error('An authenticated operator workflow is required for cloud secret reload');
   }
-  const identity = await operatorAuthenticator.authorize(context, { action });
+  let identity;
+  try {
+    identity = await operatorAuthenticator.authorize(context, { action });
+  } catch {
+    throw new Error('Cloud secret reload operator authorization failed');
+  }
   if (!identity || identity.mfaVerified !== true || typeof identity.actorId !== 'string' ||
       !OPERATOR_ID.test(identity.actorId)) {
     throw new Error('Cloud secret reload requires an MFA-verified operator identity');
@@ -100,7 +114,7 @@ export async function createCloudStudioFromSecretManager({
     throw new TypeError('createStudioServerImpl must be a function');
   }
 
-  const snapshot = validateSecretSnapshot(await secretManager.readCloudSecrets());
+  const snapshot = validateSecretSnapshot(await readCloudSecrets(secretManager));
   const initialTokenDigest = digestTokens(snapshot.tokens);
   const initialAuditKeyRing = auditKeyRingMetadata(snapshot.auditKeyRing);
   const studio = createStudioServerImpl({
@@ -142,7 +156,7 @@ export async function createCloudStudioFromSecretManager({
       const actorId = await authorizeOperator(
         operatorAuthenticator, context, 'cloud.credentials.reload',
       );
-      const next = validateSecretSnapshot(await secretManager.readCloudSecrets());
+      const next = validateSecretSnapshot(await readCloudSecrets(secretManager));
       if (BigInt(next.version) < BigInt(secretVersion)) {
         throw new Error('Secret manager returned an older snapshot revision; refusing credential rollback');
       }
