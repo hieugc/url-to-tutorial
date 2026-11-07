@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -747,4 +748,63 @@ test('Cloud audit archive refuses missing or mismatched external acknowledgement
   assert.ok(studio.store.cloudAuditArchiveBatch(500).events.length > 0, 'Archive batch must include unarchived events');
   await assert.rejects(studio.auditAdmin.archiveBatch(), /did not acknowledge the exact batch checkpoint/);
   assert.equal(studio.store.cloudAuditArchiveBatch(500).previousSequence, 0);
+});
+
+
+test('Cloud audit signing key rotation preserves old verification keys and uses the new key for future events', async t => {
+  const root = await temp();
+  const oldKey = 'test-only-old-audit-key-material-0123456789abcdef';
+  const newKey = 'test-only-new-audit-key-material-0123456789abcdef';
+  const oldKeyId = createHash('sha256').update(oldKey).digest('hex').slice(0, 16);
+  const newKeyId = createHash('sha256').update(newKey).digest('hex').slice(0, 16);
+  const first = new StudioJobStore(root, { auditKey: oldKey });
+  first.recordCloudAudit({ tenantId: 'tenant-a', action: 'test.before_rotation' });
+  const rotated = first.rotateAuditSigningKey({
+    keyId: newKeyId, key: newKey, actorId: 'security-operator',
+  });
+  assert.deepEqual(rotated, { previousKeyId: oldKeyId, activeKeyId: newKeyId });
+  first.recordCloudAudit({ tenantId: 'tenant-a', action: 'test.after_rotation' });
+  assert.equal(first.verifyCloudAuditChain().valid, true);
+  assert.deepEqual(first.auditKeyRingMetadata(), {
+    activeKeyId: newKeyId, keyIds: [oldKeyId, newKeyId],
+  });
+  first.close();
+
+  const restored = new StudioJobStore(root, {
+    auditKeyRing: { activeKeyId: newKeyId, keys: { [oldKeyId]: oldKey, [newKeyId]: newKey } },
+  });
+  assert.equal(restored.verifyCloudAuditChain().valid, true);
+  const events = restored.cloudAuditEvents('tenant-a');
+  assert.equal(events.length, 3);
+  assert.equal(events[0].keyId, oldKeyId);
+  assert.equal(events[1].keyId, newKeyId);
+  assert.equal(events[2].keyId, newKeyId);
+  restored.close();
+
+  assert.throws(() => new StudioJobStore(root, { auditKey: newKey }), /integrity verification failed/);
+  t.after(() => rm(root, { recursive: true, force: true }));
+});
+
+test('Cloud server exposes key rotation only through trusted audit administration capability', async t => {
+  const root = await temp();
+  const key = 'test-only-cloud-audit-key-ring-initial-0123456789';
+  const keyId = createHash('sha256').update(key).digest('hex').slice(0, 16);
+  const studio = createStudioServer(serverOptions(root, {
+    cloudAuditKey: null,
+    cloudAuditKeyRing: { activeKeyId: keyId, keys: { [keyId]: key } },
+  }));
+  const origin = await listen(studio.server);
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+  const rotatedKey = 'test-only-cloud-audit-key-ring-next-0123456789';
+  const rotatedId = createHash('sha256').update(rotatedKey).digest('hex').slice(0, 16);
+  const result = studio.auditAdmin.rotateSigningKey({
+    keyId: rotatedId, key: rotatedKey, actorId: 'operator-1',
+  });
+  assert.deepEqual(result, { previousKeyId: keyId, activeKeyId: rotatedId });
+  assert.equal(studio.store.verifyCloudAuditChain().valid, true);
+  assert.equal(studio.auditAdmin.keyMetadata().activeKeyId, rotatedId);
+  assert.equal((await call(origin, '/api/health')).status, 200);
 });
