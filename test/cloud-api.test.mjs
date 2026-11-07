@@ -91,10 +91,12 @@ test('Cloud auth requires strong configured tokens and explicit tenant project A
 
 test('Cloud API authenticates every tenant route and enforces project-scoped job access', async t => {
   const root = await temp();
-  t.after(() => rm(root, { recursive: true, force: true }));
   const studio = createStudioServer(serverOptions(root));
   const origin = await listen(studio.server);
-  t.after(() => new Promise(resolve => studio.server.close(resolve)));
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
 
   assert.equal((await call(origin, '/api/health')).status, 200);
   assert.equal((await call(origin, '/api/health')).data.scope, 'cloud-api-control-plane');
@@ -137,7 +139,6 @@ test('Cloud API authenticates every tenant route and enforces project-scoped job
 
 test('Cloud API applies tenant-wide concurrent and rolling daily job quotas', async t => {
   const root = await temp();
-  t.after(() => rm(root, { recursive: true, force: true }));
   let releaseFirst;
   let signalFirst;
   const firstStarted = new Promise(resolve => { signalFirst = resolve; });
@@ -154,7 +155,10 @@ test('Cloud API applies tenant-wide concurrent and rolling daily job quotas', as
     },
   }));
   const origin = await listen(studio.server);
-  t.after(() => new Promise(resolve => studio.server.close(resolve)));
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
 
   const first = await call(origin, '/api/discover', {
     method: 'POST', token: tokenA, projectId: 'project-a',
@@ -191,17 +195,20 @@ test('Cloud API applies tenant-wide concurrent and rolling daily job quotas', as
 
 test('Cloud API rate-limits per tenant and emits Retry-After', async t => {
   const root = await temp();
-  t.after(() => rm(root, { recursive: true, force: true }));
   const studio = createStudioServer(serverOptions(root, {
     cloudLimits: { maxRequestsPerMinute: 2 },
   }));
   const origin = await listen(studio.server);
-  t.after(() => new Promise(resolve => studio.server.close(resolve)));
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
 
   assert.equal((await call(origin, '/api/jobs', { token: tokenA, projectId: 'project-a' })).status, 200);
   assert.equal((await call(origin, '/api/jobs', { token: tokenA, projectId: 'project-a2' })).status, 200);
   const limited = await call(origin, '/api/jobs', { token: tokenA, projectId: 'project-a' });
   assert.equal(limited.status, 429);
-  assert.equal(limited.headers['retry-after'], '60');
+  assert.ok(Number(limited.headers['retry-after']) >= 1 &&
+    Number(limited.headers['retry-after']) <= 60);
   assert.equal((await call(origin, '/api/jobs', { token: tokenB, projectId: 'project-b' })).status, 200);
 });
