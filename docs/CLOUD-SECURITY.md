@@ -53,7 +53,11 @@ const studio = createStudioServer({
 ```
 
 - Pass `cloudAuditKey` to `createStudioServer` only from a trusted secret manager. Cloud mode refuses to start if it is missing or shorter than 32 bytes.
-- Keep the same high-entropy key stable across restarts and replicas. Key rotation is not yet implemented; changing it without a planned chain migration makes the existing ledger unverifiable and blocks cloud startup.
+- The versioned key ring is supplied as `cloudAuditKeyRing: { activeKeyId, keys }`; each key ID is the first 16 hex characters of that key's SHA-256 fingerprint. Every event stores its key ID, and verification resolves the matching historical key.
+- Rotation is available only through trusted host code via `studio.auditAdmin.rotateSigningKey({ keyId, key, actorId })`. It verifies the existing chain first, adds a new key without removing historical keys, switches the active signer, and records `audit.signing_key_rotated` under the new key. Old keys must remain available for verification.
+- Before rotating, add the new key to the secret manager and distribute a key ring containing both old and new keys to every replica. Rotate each replica, verify its chain, then update the secret manager's active key ID. Do not remove an old key until an approved archive/retention policy proves no retained local event needs it.
+- Pre-key-ID signed rows are migrated only after verifying the legacy HMAC chain with the prior single key. When using a key ring for this one-time migration, set `activeKeyId` to the legacy key's fingerprint; after migration and verification, rotate to the new key. Migration refuses to rewrite a prefix already acknowledged by the external archive. If legacy verification fails or the old key is unavailable, cloud startup fails closed.
+- A rotation is not a substitute for secret-manager integration or multi-replica orchestration. The caller must authenticate the operator, update the secret manager and coordinate all replicas.
 - HMAC signing and checkpoint updates occur in the same `BEGIN IMMEDIATE` transaction as each audit append. Startup verifies every sequence and signature before accepting cloud traffic.
 - The signing key is not a database field, environment dump, audit detail or HTTP response. Do not log it or expose it to workers/tenants.
 - This is tamper evidence, not immutable storage: a privileged attacker with database write access can roll back the database to an older valid snapshot. External append-only archival and independently stored checkpoints remain release gates.
@@ -69,7 +73,7 @@ const studio = createStudioServer({
 - Each audit row receives a monotonic sequence, previous-event hash and HMAC-SHA256 signature. The checkpoint is committed in the same SQLite transaction as the event. Existing unsigned rows from the prior schema are backfilled once on first startup with the signing key.
 - Cloud startup verifies the complete chain and checkpoint; a missing/wrong key, modified event, missing sequence or broken link prevents cloud mode from starting. `store.verifyCloudAuditChain()` provides an operator-side verification result.
 - The HMAC chain detects event modification, insertion and reordering while the signing key remains secret. A database rollback to an older internally consistent snapshot is not detectable without an external checkpoint or append-only archive.
-- Audit events still have no retention/archival policy, external append-only sink, external checkpoint, key-rotation procedure or operator audit UI. Disk/database failure can prevent audit writes; production readiness requires monitored storage and explicit retention/export controls.
+- Versioned signing-key rotation is supported through a trusted in-process capability, with old keys retained for verification. Pre-key-ID signed rows must be migrated while the legacy signer is the active key in the supplied key ring; migration is refused after an external archive checkpoint has advanced. No retention/deletion scheduler, vendor-specific archive sink, independent checkpoint service or operator audit UI is deployed. Disk/database failure can prevent audit writes; production readiness requires monitored storage and explicit retention/export controls.
 
 ## Tenant usage metering and budgets
 
@@ -101,6 +105,23 @@ createStudioServer({
 });
 ```
 
+Trusted rotation example:
+
+```js
+const ring = await secretManager.readCloudAuditKeyRing();
+// The secret manager already contains both the active and next key.
+const studio = createStudioServer({ cloudMode: true, cloudAuditKeyRing: ring, /* other settings */ });
+const nextKey = await secretManager.readCloudAuditKey('audit-key-next');
+const nextKeyId = createHash('sha256').update(nextKey).digest('hex').slice(0, 16);
+// Repeat this trusted rotation on every replica, then verify each chain.
+studio.auditAdmin.rotateSigningKey({
+  keyId: nextKeyId, key: nextKey, actorId: 'platform-operator',
+});
+await secretManager.setActiveCloudAuditKeyId(nextKeyId);
+```
+
+The sequence above is illustrative: a production operator workflow must coordinate secret-manager state and every API replica. Do not switch the secret manager's active key or remove historical keys until all replicas confirm the new key ring and the audit chain verifies.
+
 ## External audit archive contract
 
 - A trusted host process may inject `cloudAuditArchive(batch)` into `createStudioServer`. This callback is not exposed through an HTTP route and must authenticate to an external append-only archive using host-managed credentials.
@@ -109,7 +130,7 @@ createStudioServer({
 - Only after the exact acknowledgement does SQLite advance its archive checkpoint, using a transaction and compare-and-set against the previous sequence. Concurrent archive attempts cannot move the checkpoint backwards or skip a sequence.
 - If the external append succeeds but the local checkpoint write fails, the same batch will be retried. The external sink therefore MUST deduplicate by sequence and reject conflicting payloads for an already stored sequence.
 - The archive checkpoint is local operational state. It does not itself prove the external copy is immutable or independently administered. Store the external checkpoint separately from the API host and verify it during disaster recovery.
-- This PR does not ship a vendor-specific archive sink, retention deletion, archival scheduler or key-rotation procedure. Do not delete local audit rows until an independently operated sink, external checkpoint, restore test and retention policy have been deployed and verified.
+- The repository exposes the trusted archive callback and checkpoint protocol, but does not ship a vendor-specific sink, retention deletion or archival scheduler. Versioned key rotation is available through `auditAdmin.rotateSigningKey`; every replica must retain historical verification keys and complete rotation before the secret manager's active key changes. Do not delete local audit rows until an independently operated sink, external checkpoint, restore test and retention policy have been deployed and verified.
 
 Trusted host-code shape:
 
@@ -201,7 +222,7 @@ No public cloud startup command or deployment is included in this PR. The defaul
 
 - Deploy and independently verify the TLS reverse proxy, Host allowlist and trusted forwarding-header behavior.
 - Add a secret-manager integration, authenticated operator workflow, multi-replica credential distribution, tenant/project administration and break-glass procedures.
-- Deploy the external append-only audit sink and independently stored checkpoints; add a scheduler, retention/deletion only after verified archival, safe signing-key rotation and operational monitoring for SQLite disk/database failures.
+- Deploy the external append-only audit sink and independently stored checkpoints; add a scheduler and retention/deletion only after verified archival. Add secret-manager integration, authenticated multi-replica rotation workflow and operational monitoring for SQLite disk/database failures.
 - Add real billing/payment integration only if commercial charging is required; replace estimate-only rates with measured infrastructure costs and finance-reviewed pricing. Add artifact encryption and a tested retention/deletion process.
 - Add an OS-level host firewall policy for the proxy, independent review of Docker bridge rules, and red-team tests for DNS rebinding, redirects, nested subresources, metadata endpoints, tenant enumeration, parallel abuse and cancellation races.
 - Add a cleanup/reconciliation service for orphaned per-job networks after a hard API-host or Docker-daemon failure. Worker process timeout bounds execution, but does not itself remove a network left behind by a host crash.

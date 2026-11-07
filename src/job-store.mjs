@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 
@@ -9,19 +9,53 @@ const EMPTY_AUDIT_HASH = '0'.repeat(64);
 const terminal = job => ['completed', 'failed', 'cancelled', 'interrupted'].includes(job.status);
 
 export class StudioJobStore {
-  constructor(outputRoot, { auditKey = null } = {}) {
-    if (auditKey !== null && typeof auditKey !== 'string' && !Buffer.isBuffer(auditKey)) {
-      throw new TypeError('Cloud audit signing key must be a string or Buffer');
+  constructor(outputRoot, { auditKey = null, auditKeyRing = null } = {}) {
+    if (auditKey !== null && auditKeyRing !== null) {
+      throw new TypeError('Configure either auditKey or auditKeyRing, not both');
     }
-    const resolvedAuditKey = auditKey === null ? null : Buffer.from(auditKey);
-    if (resolvedAuditKey && resolvedAuditKey.length < 32) {
-      throw new TypeError('Cloud audit signing key must contain at least 32 bytes');
+    this.auditKeys = new Map();
+    this.activeAuditKeyId = null;
+    if (auditKeyRing !== null) {
+      if (!auditKeyRing || typeof auditKeyRing !== 'object' ||
+          !/^[a-f0-9]{16}$/.test(auditKeyRing.activeKeyId || '') ||
+          !auditKeyRing.keys || typeof auditKeyRing.keys !== 'object' || Array.isArray(auditKeyRing.keys)) {
+        throw new TypeError('Cloud audit key ring requires activeKeyId and a keys object');
+      }
+      for (const [keyId, value] of Object.entries(auditKeyRing.keys)) {
+        if (!/^[a-f0-9]{16}$/.test(keyId) ||
+            (typeof value !== 'string' && !Buffer.isBuffer(value))) {
+          throw new TypeError('Cloud audit key ring entries require 16-hex IDs and string/Buffer keys');
+        }
+        const key = Buffer.from(value);
+        if (key.length < 32) throw new TypeError('Cloud audit keys must contain at least 32 bytes');
+        if (createHash('sha256').update(key).digest('hex').slice(0, 16) !== keyId) {
+          throw new TypeError('Cloud audit key ID must match the SHA-256 key fingerprint');
+        }
+        this.auditKeys.set(keyId, key);
+      }
+      if (!this.auditKeys.has(auditKeyRing.activeKeyId)) {
+        throw new TypeError('Active cloud audit key is missing from the key ring');
+      }
+      this.activeAuditKeyId = auditKeyRing.activeKeyId;
+    } else if (auditKey !== null) {
+      if (typeof auditKey !== 'string' && !Buffer.isBuffer(auditKey)) {
+        throw new TypeError('Cloud audit signing key must be a string or Buffer');
+      }
+      const key = Buffer.from(auditKey);
+      if (key.length < 32) throw new TypeError('Cloud audit signing key must contain at least 32 bytes');
+      this.activeAuditKeyId = createHash('sha256').update(key).digest('hex').slice(0, 16);
+      this.auditKeys.set(this.activeAuditKeyId, key);
     }
+    this.auditKey = this.activeAuditKeyId ? this.auditKeys.get(this.activeAuditKeyId) : null;
+    // During pre-key-ID migration, the ring's active key must be the legacy signer.
+    // This permits a controlled one-time migration before switching to the new key.
+    this.legacyAuditKey = auditKeyRing !== null
+      ? Buffer.from(this.auditKeys.get(this.activeAuditKeyId))
+      : (auditKey === null ? null : Buffer.from(auditKey));
     const root = path.resolve(outputRoot);
     mkdirSync(root, { recursive: true });
     this.db = new DatabaseSync(path.join(root, 'studio-jobs.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL;');
-    this.auditKey = resolvedAuditKey;
     this.db.exec('CREATE TABLE IF NOT EXISTS studio_jobs (' +
       'id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS cloud_job_submissions (' +
@@ -51,10 +85,10 @@ export class StudioJobStore {
     this.db.exec('CREATE TABLE IF NOT EXISTS cloud_audit_events (' +
       'event_id TEXT PRIMARY KEY, sequence INTEGER, previous_hash TEXT, event_hash TEXT, ' +
       'tenant_id TEXT NOT NULL, project_id TEXT, principal_id TEXT, action TEXT NOT NULL, ' +
-      'resource_id TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT)');
+      'resource_id TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT, key_id TEXT)');
     const auditColumns = new Set(this.db.prepare('PRAGMA table_info(cloud_audit_events)')
       .all().map(column => column.name));
-    for (const [name, type] of [['sequence', 'INTEGER'], ['previous_hash', 'TEXT'], ['event_hash', 'TEXT']]) {
+    for (const [name, type] of [['sequence', 'INTEGER'], ['previous_hash', 'TEXT'], ['event_hash', 'TEXT'], ['key_id', 'TEXT']]) {
       if (!auditColumns.has(name)) this.db.exec('ALTER TABLE cloud_audit_events ADD COLUMN ' + name + ' ' + type);
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS cloud_audit_events_tenant_time ' +
@@ -110,10 +144,10 @@ export class StudioJobStore {
     this.deleteCloudStorageUsageStatement = this.db.prepare(
       'DELETE FROM cloud_storage_usage WHERE job_id=?');
     this.insertCloudAuditStatement = this.db.prepare(
-      'INSERT INTO cloud_audit_events (event_id, sequence, previous_hash, event_hash, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      'INSERT INTO cloud_audit_events (event_id, sequence, previous_hash, event_hash, tenant_id, project_id, principal_id, action, resource_id, outcome, created_at, details, key_id) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     this.listCloudAuditStatement = this.db.prepare(
-      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, ' +
+      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, key_id AS keyId, ' +
       'tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, ' +
       'action, resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
       'FROM cloud_audit_events WHERE tenant_id=? ORDER BY sequence, rowid');
@@ -123,7 +157,7 @@ export class StudioJobStore {
       'SELECT last_archived_sequence AS lastArchivedSequence, last_archived_hash AS lastArchivedHash ' +
       'FROM cloud_audit_archive_state WHERE id=1');
     this.auditArchiveBatchStatement = this.db.prepare(
-      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, ' +
+      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, key_id AS keyId, ' +
       'tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, action, ' +
       'resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
       'FROM cloud_audit_events WHERE sequence>? ORDER BY sequence LIMIT ?');
@@ -134,18 +168,19 @@ export class StudioJobStore {
     this.updateAuditStateStatement = this.db.prepare(
       'UPDATE cloud_audit_state SET last_sequence=?, last_hash=? WHERE id=1');
     this.auditRowsStatement = this.db.prepare(
-      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, ' +
+      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, key_id AS keyId, ' +
       'tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, action, ' +
       'resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
       'FROM cloud_audit_events ORDER BY sequence, rowid');
     this.legacyAuditRowsStatement = this.db.prepare(
-      'SELECT event_id AS eventId, tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, ' +
-      'action, resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
+      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, ' +
+      'tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, ' +
+      'action, resource_id AS resourceId, outcome, created_at AS createdAt, details, key_id AS keyId ' +
       'FROM cloud_audit_events ORDER BY rowid');
     this.updateAuditRowStatement = this.db.prepare(
-      'UPDATE cloud_audit_events SET sequence=?, previous_hash=?, event_hash=? WHERE event_id=?');
+      'UPDATE cloud_audit_events SET sequence=?, previous_hash=?, event_hash=?, key_id=? WHERE event_id=?');
     this.deleteStatement = this.db.prepare('DELETE FROM studio_jobs WHERE id=?');
-    if (this.auditKey) {
+    if (this.auditKeys.size > 0) {
       try {
         this.initializeAuditChain();
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS cloud_audit_events_sequence ON cloud_audit_events(sequence)');
@@ -300,18 +335,36 @@ export class StudioJobStore {
     }
   }
 
-  auditEventHash(sequence, previousHash, event) {
+  legacyAuditEventHash(sequence, previousHash, event) {
+    // The active ring key must be the legacy signer during a pre-key-ID migration.
+    const key = this.legacyAuditKey || this.auditKeys.get(this.activeAuditKeyId);
+    if (!key) throw new Error('Legacy audit key is required to verify pre-key-ID events');
     const payload = JSON.stringify([
       event.eventId, event.tenantId, event.projectId, event.principalId,
       event.action, event.resourceId, event.outcome, event.createdAt, event.details,
     ]);
-    return createHmac('sha256', this.auditKey)
+    return createHmac('sha256', key)
+      .update(String(sequence) + '\\n' + previousHash + '\\n' + payload, 'utf8')
+      .digest('hex');
+  }
+
+  auditEventHash(sequence, previousHash, event) {
+    const keyId = event.keyId || this.activeAuditKeyId;
+    const key = this.auditKeys.get(keyId);
+    if (!key) throw new Error('Cloud audit signing key is unavailable: ' + keyId);
+    const payload = JSON.stringify([
+      event.eventId, keyId, event.tenantId, event.projectId, event.principalId,
+      event.action, event.resourceId, event.outcome, event.createdAt, event.details,
+    ]);
+    return createHmac('sha256', key)
       .update(String(sequence) + '\\n' + previousHash + '\\n' + payload, 'utf8')
       .digest('hex');
   }
 
   insertCloudAudit(event) {
-    if (!this.auditKey) throw new Error('Cloud audit signing key is not configured');
+    if (!this.activeAuditKeyId || !this.auditKeys.has(this.activeAuditKeyId)) {
+      throw new Error('Cloud audit signing key is not configured');
+    }
     if (!event || typeof event.tenantId !== 'string' || !event.tenantId ||
         typeof event.action !== 'string' || !/^[a-z][a-z0-9_.-]{1,63}$/.test(event.action) ||
         !['success', 'denied', 'failed'].includes(event.outcome || 'success')) {
@@ -329,7 +382,7 @@ export class StudioJobStore {
       eventId: randomUUID(), tenantId: event.tenantId,
       projectId: event.projectId || null, principalId: event.principalId || null,
       action: event.action, resourceId: event.resourceId || null,
-      outcome: event.outcome || 'success', createdAt, details,
+      outcome: event.outcome || 'success', createdAt, details, keyId: this.activeAuditKeyId,
     };
     const state = this.auditStateStatement.get();
     const sequence = Number(state.lastSequence) + 1;
@@ -337,7 +390,7 @@ export class StudioJobStore {
     const eventHash = this.auditEventHash(sequence, previousHash, row);
     this.insertCloudAuditStatement.run(
       row.eventId, sequence, previousHash, eventHash, row.tenantId, row.projectId,
-      row.principalId, row.action, row.resourceId, row.outcome, row.createdAt, row.details,
+      row.principalId, row.action, row.resourceId, row.outcome, row.createdAt, row.details, row.keyId,
     );
     this.updateAuditStateStatement.run(sequence, eventHash);
   }
@@ -348,15 +401,40 @@ export class StudioJobStore {
     const chainRows = this.auditRowsStatement.all();
     const unsigned = chainRows.filter(row =>
       row.sequence === null && row.previousHash === null && row.eventHash === null);
+    const missingKeyIds = chainRows.filter(row => !row.keyId);
     if (rows.length === 0) {
       if (Number(state.lastSequence) !== 0 || state.lastHash !== EMPTY_AUDIT_HASH) {
         throw new Error('Cloud audit integrity verification failed: chain state has no events');
       }
       return;
     }
-    if (unsigned.length === chainRows.length) {
-      if (Number(state.lastSequence) !== 0 || state.lastHash !== EMPTY_AUDIT_HASH) {
-        throw new Error('Cloud audit integrity verification failed: unsigned events conflict with chain state');
+    // Upgrade pre-key-ID HMAC rows once. Never rewrite an already externally
+    // archived prefix: its immutable copy must remain independently verifiable.
+    if (missingKeyIds.length === chainRows.length) {
+      const archive = this.auditArchiveStateStatement.get();
+      if (Number(archive.lastArchivedSequence) !== 0) {
+        throw new Error('Cloud audit key-ID migration requires the external archive checkpoint to be zero');
+      }
+      if (unsigned.length === chainRows.length) {
+        if (Number(state.lastSequence) !== 0 || state.lastHash !== EMPTY_AUDIT_HASH) {
+          throw new Error('Cloud audit integrity verification failed: unsigned events conflict with chain state');
+        }
+      } else {
+        let legacySequence = 0;
+        let legacyPreviousHash = EMPTY_AUDIT_HASH;
+        for (const row of rows) {
+          legacySequence++;
+          const expected = Buffer.from(this.legacyAuditEventHash(
+            legacySequence, legacyPreviousHash, row), 'hex');
+          const actual = Buffer.from(row.eventHash || '', 'hex');
+          if (actual.length !== 32 || !timingSafeEqual(expected, actual)) {
+            throw new Error('Cloud audit integrity verification failed: legacy event signature mismatch');
+          }
+          legacyPreviousHash = row.eventHash;
+        }
+        if (Number(state.lastSequence) !== legacySequence || state.lastHash !== legacyPreviousHash) {
+          throw new Error('Cloud audit integrity verification failed: legacy checkpoint mismatch');
+        }
       }
       this.db.exec('BEGIN IMMEDIATE');
       try {
@@ -364,8 +442,10 @@ export class StudioJobStore {
         let previousHash = EMPTY_AUDIT_HASH;
         for (const row of rows) {
           sequence++;
-          const eventHash = this.auditEventHash(sequence, previousHash, row);
-          this.updateAuditRowStatement.run(sequence, previousHash, eventHash, row.eventId);
+          const migrated = { ...row, keyId: this.activeAuditKeyId };
+          const eventHash = this.auditEventHash(sequence, previousHash, migrated);
+          this.updateAuditRowStatement.run(sequence, previousHash, eventHash,
+            this.activeAuditKeyId, row.eventId);
           previousHash = eventHash;
         }
         this.updateAuditStateStatement.run(sequence, previousHash);
@@ -376,7 +456,7 @@ export class StudioJobStore {
       }
       return;
     }
-    if (unsigned.length > 0 || chainRows.some(row =>
+    if (unsigned.length > 0 || missingKeyIds.length > 0 || chainRows.some(row =>
       !Number.isSafeInteger(row.sequence) || typeof row.previousHash !== 'string' ||
       typeof row.eventHash !== 'string')) {
       throw new Error('Cloud audit integrity verification failed: partial or missing signatures');
@@ -388,13 +468,14 @@ export class StudioJobStore {
   }
 
   verifyCloudAuditChain() {
-    if (!this.auditKey) return { valid: false, reason: 'Audit signing key is not configured' };
+    if (this.auditKeys.size === 0) return { valid: false, reason: 'Audit signing key ring is not configured' };
     let sequence = 0;
     let previousHash = EMPTY_AUDIT_HASH;
     for (const row of this.auditRowsStatement.all()) {
       if (row.sequence !== sequence + 1 || row.previousHash !== previousHash ||
+          !/^[a-f0-9]{16}$/.test(row.keyId || '') || !this.auditKeys.has(row.keyId) ||
           !/^[a-f0-9]{64}$/.test(row.eventHash || '')) {
-        return { valid: false, reason: 'Audit sequence or previous-hash link is invalid', sequence: row.sequence };
+        return { valid: false, reason: 'Audit sequence, key ID or previous-hash link is invalid', sequence: row.sequence };
       }
       const expected = Buffer.from(this.auditEventHash(row.sequence, previousHash, row), 'hex');
       const actual = Buffer.from(row.eventHash, 'hex');
@@ -409,6 +490,52 @@ export class StudioJobStore {
       return { valid: false, reason: 'Audit chain checkpoint does not match stored events' };
     }
     return { valid: true, count: sequence, lastSequence: sequence, lastHash: previousHash };
+  }
+
+  rotateAuditSigningKey({ keyId, key, actorId = 'operator' } = {}) {
+    if (!this.activeAuditKeyId || !this.verifyCloudAuditChain().valid) {
+      throw new Error('Cannot rotate an unverified audit signing key ring');
+    }
+    if (typeof keyId !== 'string' || !/^[a-f0-9]{16}$/.test(keyId) ||
+        (typeof key !== 'string' && !Buffer.isBuffer(key))) {
+      throw new TypeError('New audit key requires a 16-hex keyId and string/Buffer key');
+    }
+    const resolved = Buffer.from(key);
+    if (resolved.length < 32) throw new TypeError('New audit signing key must contain at least 32 bytes');
+    if (createHash('sha256').update(resolved).digest('hex').slice(0, 16) !== keyId) {
+      throw new TypeError('New audit key ID must match the SHA-256 key fingerprint');
+    }
+    if (keyId === this.activeAuditKeyId) {
+      throw new Error('Audit signing key is already active');
+    }
+    const existingKey = this.auditKeys.get(keyId);
+    if (existingKey && (existingKey.length !== resolved.length || !timingSafeEqual(existingKey, resolved))) {
+      throw new Error('Audit key ID is already bound to a different key');
+    }
+    if (typeof actorId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.@-]{1,63}$/.test(actorId)) {
+      throw new TypeError('Audit key rotation actorId is invalid');
+    }
+    const previousKeyId = this.activeAuditKeyId;
+    const addedKey = !existingKey;
+    if (addedKey) this.auditKeys.set(keyId, resolved);
+    this.activeAuditKeyId = keyId;
+    this.auditKey = resolved;
+    try {
+      this.recordCloudAudit({
+        tenantId: 'platform', principalId: actorId, action: 'audit.signing_key_rotated',
+        details: { previousKeyId, activeKeyId: keyId },
+      });
+    } catch (error) {
+      if (addedKey) this.auditKeys.delete(keyId);
+      this.activeAuditKeyId = previousKeyId;
+      this.auditKey = this.auditKeys.get(previousKeyId);
+      throw error;
+    }
+    return { previousKeyId, activeKeyId: keyId };
+  }
+
+  auditKeyRingMetadata() {
+    return { activeKeyId: this.activeAuditKeyId, keyIds: [...this.auditKeys.keys()] };
   }
 
   recordCloudAudits(events) {
