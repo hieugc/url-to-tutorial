@@ -61,6 +61,12 @@ export class StudioJobStore {
       'ON cloud_audit_events(tenant_id, created_at)');
     this.db.exec('CREATE TABLE IF NOT EXISTS cloud_audit_state (' +
       'id INTEGER PRIMARY KEY CHECK(id=1), last_sequence INTEGER NOT NULL, last_hash TEXT NOT NULL)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS cloud_audit_archive_state (' +
+      'id INTEGER PRIMARY KEY CHECK(id=1), last_archived_sequence INTEGER NOT NULL, ' +
+      'last_archived_hash TEXT NOT NULL, updated_at TEXT NOT NULL)');
+    this.db.prepare('INSERT OR IGNORE INTO cloud_audit_archive_state ' +
+      '(id, last_archived_sequence, last_archived_hash, updated_at) VALUES (1, 0, ?, ?)')
+      .run(EMPTY_AUDIT_HASH, new Date().toISOString());
     this.db.prepare('INSERT OR IGNORE INTO cloud_audit_state (id, last_sequence, last_hash) VALUES (1, 0, ?)')
       .run(EMPTY_AUDIT_HASH);
     this.put = this.db.prepare('INSERT INTO studio_jobs (id, created_at, updated_at, json) VALUES (?, ?, ?, ?) ' +
@@ -113,6 +119,18 @@ export class StudioJobStore {
       'FROM cloud_audit_events WHERE tenant_id=? ORDER BY sequence, rowid');
     this.auditStateStatement = this.db.prepare(
       'SELECT last_sequence AS lastSequence, last_hash AS lastHash FROM cloud_audit_state WHERE id=1');
+    this.auditArchiveStateStatement = this.db.prepare(
+      'SELECT last_archived_sequence AS lastArchivedSequence, last_archived_hash AS lastArchivedHash ' +
+      'FROM cloud_audit_archive_state WHERE id=1');
+    this.auditArchiveBatchStatement = this.db.prepare(
+      'SELECT event_id AS eventId, sequence, previous_hash AS previousHash, event_hash AS eventHash, ' +
+      'tenant_id AS tenantId, project_id AS projectId, principal_id AS principalId, action, ' +
+      'resource_id AS resourceId, outcome, created_at AS createdAt, details ' +
+      'FROM cloud_audit_events WHERE sequence>? ORDER BY sequence LIMIT ?');
+    this.auditArchiveEventAtSequenceStatement = this.db.prepare(
+      'SELECT event_hash AS eventHash FROM cloud_audit_events WHERE sequence=?');
+    this.updateAuditArchiveStateStatement = this.db.prepare(
+      'UPDATE cloud_audit_archive_state SET last_archived_sequence=?, last_archived_hash=?, updated_at=? WHERE id=1');
     this.updateAuditStateStatement = this.db.prepare(
       'UPDATE cloud_audit_state SET last_sequence=?, last_hash=? WHERE id=1');
     this.auditRowsStatement = this.db.prepare(
@@ -408,6 +426,67 @@ export class StudioJobStore {
 
   recordCloudAudit(event) {
     this.recordCloudAudits([event]);
+  }
+
+  cloudAuditArchiveBatch(limit = 500) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5000) {
+      throw new TypeError('Audit archive batch limit must be between 1 and 5000');
+    }
+    const checkpoint = this.auditArchiveStateStatement.get();
+    const integrity = this.verifyCloudAuditChain();
+    if (!integrity.valid) throw new Error('Cannot archive an invalid audit chain: ' + integrity.reason);
+    const archivedSequence = Number(checkpoint.lastArchivedSequence);
+    if (archivedSequence > integrity.lastSequence) {
+      throw new Error('Audit archive checkpoint is ahead of the local ledger');
+    }
+    if (archivedSequence > 0) {
+      const event = this.auditArchiveEventAtSequenceStatement.get(archivedSequence);
+      if (!event || event.eventHash !== checkpoint.lastArchivedHash) {
+        throw new Error('Audit archive checkpoint does not match the local ledger');
+      }
+    } else if (checkpoint.lastArchivedHash !== EMPTY_AUDIT_HASH) {
+      throw new Error('Empty audit archive checkpoint has an invalid hash');
+    }
+    const events = this.auditArchiveBatchStatement.all(archivedSequence, limit).map(event => ({
+      ...event,
+      details: event.details ? JSON.parse(event.details) : null,
+    }));
+    return {
+      previousSequence: archivedSequence,
+      previousHash: checkpoint.lastArchivedHash,
+      events,
+      throughSequence: events.at(-1)?.sequence ?? archivedSequence,
+      throughHash: events.at(-1)?.eventHash ?? checkpoint.lastArchivedHash,
+    };
+  }
+
+  commitCloudAuditArchiveCheckpoint({ expectedPreviousSequence, throughSequence, throughHash } = {}) {
+    if (!Number.isSafeInteger(expectedPreviousSequence) || expectedPreviousSequence < 0 ||
+        !Number.isSafeInteger(throughSequence) || throughSequence < expectedPreviousSequence ||
+        typeof throughHash !== 'string' || !/^[a-f0-9]{64}$/.test(throughHash)) {
+      throw new TypeError('Invalid external audit archive checkpoint');
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const current = this.auditArchiveStateStatement.get();
+      if (Number(current.lastArchivedSequence) !== expectedPreviousSequence) {
+        throw new Error('Audit archive checkpoint changed concurrently; fetch a new batch');
+      }
+      const local = throughSequence === 0
+        ? { eventHash: EMPTY_AUDIT_HASH }
+        : this.auditArchiveEventAtSequenceStatement.get(throughSequence);
+      if (!local || local.eventHash !== throughHash) {
+        throw new Error('External archive acknowledgement does not match the local audit chain');
+      }
+      this.updateAuditArchiveStateStatement.run(
+        throughSequence, throughHash, new Date().toISOString(),
+      );
+      this.db.exec('COMMIT');
+      return { lastArchivedSequence: throughSequence, lastArchivedHash: throughHash };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   cloudAuditEvents(tenantId) {
