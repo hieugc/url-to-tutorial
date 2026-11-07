@@ -38,6 +38,14 @@ studio.tokenAdmin.revokeToken('service-a-previous', { actorId: 'platform-operato
 Each credential entry contains `tokenId`, `principalId`, `token`, `tenantId`, `projectIds`, and optional `expiresAt`. Multiple token IDs may share one principal ID only when their tenant and project ACLs are identical. The caller is responsible for authenticating the operator and distributing the new secret to all API replicas.
 
 
+## Audit integrity key and verification
+
+- Pass `cloudAuditKey` to `createStudioServer` only from a trusted secret manager. Cloud mode refuses to start if it is missing or shorter than 32 bytes. Example: `createStudioServer({ ..., cloudAuditKey: await secretManager.read('tutorial/cloud-audit-key') })`.
+- Keep the same high-entropy key stable across restarts and replicas. Key rotation is not yet implemented; changing it without a planned chain migration makes the existing ledger unverifiable and blocks cloud startup.
+- HMAC signing and checkpoint updates occur in the same `BEGIN IMMEDIATE` transaction as each audit append. Startup verifies every sequence and signature before accepting cloud traffic.
+- The signing key is not a database field, environment dump, audit detail or HTTP response. Do not log it or expose it to workers/tenants.
+- This is tamper evidence, not immutable storage: a privileged attacker with database write access can roll back the database to an older valid snapshot. External append-only archival and independently stored checkpoints remain release gates.
+
 ## Durable rate limiting and audit trail
 
 - Authenticated API requests consume a tenant-scoped sliding-window event in SQLite under `BEGIN IMMEDIATE`; concurrent API processes cannot independently admit requests beyond the configured tenant limit.
@@ -45,7 +53,11 @@ Each credential entry contains `tokenId`, `principalId`, `token`, `tenantId`, `p
 - Cloud job admission writes the job row, daily submission quota event and `job.submitted` / `job.retry_submitted` audit event in one SQLite transaction.
 - The audit table records tenant, project, configured principal ID, action, resource/job ID, outcome, timestamp and bounded non-secret details. It records job submission, completion, failure, cancellation, quota denials and project ACL denials.
 - Bearer tokens, authorization headers, request bodies and form values are never written to audit details. Audit rows are not exposed through tenant-facing API routes.
-- Audit events are durable in the local SQLite database, but currently have no retention/archival policy, external append-only sink, tamper-evident hash chain or operator audit UI. Disk/database failure can prevent audit writes; production readiness requires monitored storage and an explicit retention/export policy.
+- Cloud mode requires a stable audit-signing secret of at least 32 bytes, supplied by trusted host code from a secret manager. It is never stored in SQLite; the same key must be supplied after every restart.
+- Each audit row receives a monotonic sequence, previous-event hash and HMAC-SHA256 signature. The checkpoint is committed in the same SQLite transaction as the event. Existing unsigned rows from the prior schema are backfilled once on first startup with the signing key.
+- Cloud startup verifies the complete chain and checkpoint; a missing/wrong key, modified event, missing sequence or broken link prevents cloud mode from starting. `store.verifyCloudAuditChain()` provides an operator-side verification result.
+- The HMAC chain detects event modification, insertion and reordering while the signing key remains secret. A database rollback to an older internally consistent snapshot is not detectable without an external checkpoint or append-only archive.
+- Audit events still have no retention/archival policy, external append-only sink, external checkpoint, key-rotation procedure or operator audit UI. Disk/database failure can prevent audit writes; production readiness requires monitored storage and explicit retention/export controls.
 
 ## Disposable worker and outbound egress boundary
 
@@ -121,7 +133,7 @@ No public cloud startup command or deployment is included in this PR. The defaul
 
 - Deploy and independently verify the TLS reverse proxy, Host allowlist and trusted forwarding-header behavior.
 - Add a secret-manager integration, authenticated operator workflow, multi-replica credential distribution, tenant/project administration and break-glass procedures.
-- Add audit retention/archival, an external append-only sink or tamper-evident integrity protection, and operational monitoring for SQLite disk/database failures.
+- Add audit retention/archival, an external append-only sink and independently stored checkpoints, a safe signing-key rotation procedure, and operational monitoring for SQLite disk/database failures.
 - Add billing/cost accounting, per-tenant storage budgets, artifact encryption and a tested retention/deletion process.
 - Add an OS-level host firewall policy for the proxy, independent review of Docker bridge rules, and red-team tests for DNS rebinding, redirects, nested subresources, metadata endpoints, tenant enumeration, parallel abuse and cancellation races.
 - Add a cleanup/reconciliation service for orphaned per-job networks after a hard API-host or Docker-daemon failure. Worker process timeout bounds execution, but does not itself remove a network left behind by a host crash.
