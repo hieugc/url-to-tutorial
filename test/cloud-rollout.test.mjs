@@ -51,6 +51,12 @@ function createStore() {
       const record = records.get(id);
       return record ? structuredClone(record) : null;
     },
+    async resumeRollout(input) {
+      calls.push({ method: 'resumeRollout', input });
+      const record = records.get(input.rolloutId);
+      if (!record || record.state !== 'partial') throw new Error('resume not allowed');
+      record.state = 'in_progress';
+    },
     async recordReplicaAck(input) {
       calls.push({ method: 'recordReplicaAck', input });
       const record = records.get(input.rolloutId);
@@ -215,6 +221,7 @@ test('partial rollout is resumable against the same immutable secret version wit
   assert.deepEqual(second.acknowledgedReplicaIds, ['api-a', 'api-b']);
   assert.equal(attempts.get('api-a'), 1, 'already-acknowledged replica is checked, not reloaded');
   assert.equal(attempts.get('api-b'), 2, 'only the failed replica is retried');
+  assert.equal(store.calls.filter(call => call.method === 'resumeRollout').length, 1);
   assert.deepEqual(reads, [undefined, { version: '2' }]);
 });
 
