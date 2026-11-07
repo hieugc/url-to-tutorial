@@ -140,6 +140,9 @@ export function createStudioServer({
   }
   const cloudAuth = cloudMode ? createCloudAuth({ tokens: cloudTokens, limits: cloudLimits }) : null;
   const store = new StudioJobStore(outputRoot);
+  if (cloudMode) {
+    store.pruneCloudSubmissions(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+  }
   const jobs = new Map(store.recover().map(job => [job.id, job]));
   function pruneHistory() {
     const expiredIds = store.expired().map(job => job.id);
