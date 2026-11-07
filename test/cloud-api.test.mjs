@@ -323,6 +323,7 @@ test('Cloud API rejects non-public targets, interactive preview and mutating ren
 
   const accepted = await submit('/api/render', { plan: safePlan });
   assert.equal(accepted.status, 202);
+  await waitForJob(origin, accepted.data.jobId, tokenA, 'project-a');
   assert.equal(workerCalls, 1, 'Only the read-only render reaches the isolated worker');
 });
 
