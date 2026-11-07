@@ -118,6 +118,7 @@ function createReplicas(ids, initialVersion = '1', { failOnce = [] } = {}) {
       calls.push({ method: 'reloadTokens', id, assertion, options });
       assert.match(assertion, /signed-short-lived-replica-assertion-/);
       assert.equal(options.expectedVersion, '2');
+      assert.equal(options.replicaId, id);
       const count = (attempts.get(id) ?? 0) + 1;
       attempts.set(id, count);
       if (failOnce.includes(id) && count === 1) {
@@ -319,6 +320,7 @@ test('replica bootstrap reload pins the requested immutable provider version', a
         assert.equal(constraints.action, 'cloud.credentials.reload');
         assert.equal(constraints.expectedVersion, '2');
         assert.equal(constraints.rolloutId, 'rollout_12345678');
+        assert.equal(constraints.replicaId, 'api-a');
         return { actorId: 'security-operator', mfaVerified: true };
       },
     },
@@ -344,6 +346,7 @@ test('replica bootstrap reload pins the requested immutable provider version', a
   const result = await bootstrap.reloadTokens('signed-operator-assertion', {
     expectedVersion: '2',
     rolloutId: 'rollout_12345678',
+    replicaId: 'api-a',
   });
   assert.equal(result.secretVersion, '2');
   assert.deepEqual(reads, [undefined, { version: '2' }]);
