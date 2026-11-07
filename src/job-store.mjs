@@ -162,7 +162,7 @@ export class StudioJobStore {
     this.reserveCloudStorageStatement.run(jobId, tenantId, bytes, createdAt);
   }
 
-  finalizeCloudUsage(job, { workerMs, artifactBytes, costMicros = 0, period, outcome } = {}) {
+  finalizeCloudUsage(job, { workerMs, artifactBytes, costMicros = 0, period, outcome } = {}, auditEvent = null) {
     if (!job?.id || !job.tenantId || !job.projectId ||
         !Number.isSafeInteger(workerMs) || workerMs < 0 ||
         !Number.isSafeInteger(artifactBytes) || artifactBytes < 0 ||
@@ -179,6 +179,7 @@ export class StudioJobStore {
         job.id, job.tenantId, job.projectId, period, job.type, outcome || job.status,
         workerMs, artifactBytes, costMicros, job.createdAt, now,
       );
+      if (auditEvent) this.insertCloudAudit(auditEvent);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
