@@ -67,7 +67,9 @@ function auditKeyRingMetadata(ring) {
 
 async function readCloudSecrets(secretManager, options) {
   try {
-    return await secretManager.readCloudSecrets(options);
+    return options === undefined
+      ? await secretManager.readCloudSecrets()
+      : await secretManager.readCloudSecrets(options);
   } catch {
     // Provider errors may contain request details; never forward them to callers.
     throw new Error('Cloud secret manager read failed');
@@ -153,11 +155,12 @@ export async function createCloudStudioFromSecretManager({
     if (reloadInFlight) throw new Error('A cloud credential reload is already in progress');
     if (!options || typeof options !== 'object' || Array.isArray(options) ||
         Object.getPrototypeOf(options) !== Object.prototype ||
-        Object.keys(options).some(key => !['expectedVersion', 'rolloutId'].includes(key))) {
+        Object.keys(options).some(key => !['expectedVersion', 'rolloutId', 'replicaId'].includes(key))) {
       throw new TypeError('Cloud credential reload options are invalid');
     }
     const expectedVersion = options.expectedVersion;
     const rolloutId = options.rolloutId;
+    const replicaId = options.replicaId;
     if (expectedVersion !== undefined &&
         (typeof expectedVersion !== 'string' || !/^(0|[1-9][0-9]{0,127})$/.test(expectedVersion))) {
       throw new TypeError('A valid pinned secret version is required');
@@ -165,6 +168,10 @@ export async function createCloudStudioFromSecretManager({
     if (rolloutId !== undefined &&
         (typeof rolloutId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(rolloutId))) {
       throw new TypeError('A valid credential rollout ID is required');
+    }
+    if (replicaId !== undefined &&
+        (typeof replicaId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$/.test(replicaId))) {
+      throw new TypeError('A valid credential replica ID is required');
     }
     reloadInFlight = true;
     try {
@@ -175,6 +182,7 @@ export async function createCloudStudioFromSecretManager({
         {
           ...(expectedVersion === undefined ? {} : { expectedVersion }),
           ...(rolloutId === undefined ? {} : { rolloutId }),
+          ...(replicaId === undefined ? {} : { replicaId }),
         },
       );
       const next = validateSecretSnapshot(await readCloudSecrets(
