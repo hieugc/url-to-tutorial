@@ -775,10 +775,12 @@ test('Cloud audit signing key rotation preserves old verification keys and uses 
   });
   assert.equal(restored.verifyCloudAuditChain().valid, true);
   const events = restored.cloudAuditEvents('tenant-a');
-  assert.equal(events.length, 3);
+  assert.equal(events.length, 2);
   assert.equal(events[0].keyId, oldKeyId);
   assert.equal(events[1].keyId, newKeyId);
-  assert.equal(events[2].keyId, newKeyId);
+  const rotationEvent = restored.cloudAuditEvents('platform');
+  assert.equal(rotationEvent.length, 1);
+  assert.equal(rotationEvent[0].keyId, newKeyId);
   restored.close();
 
   assert.throws(() => new StudioJobStore(root, { auditKey: newKey }), /integrity verification failed/);
