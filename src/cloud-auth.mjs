@@ -93,17 +93,19 @@ export function createCloudAuth({ tokens, limits = {}, clock = Date.now } = {}) 
     return { allowed: true, retryAfterSeconds: 0 };
   }
 
-  function checkJobQuota(jobs, principal, now = clock()) {
+  function checkJobQuota(jobs, principal, now = clock(), persistedDailyCount = null) {
     const tenantJobs = jobs.filter(job => job.tenantId === principal.tenantId);
     const pending = tenantJobs.filter(job => ['queued', 'running'].includes(job.status)).length;
     if (pending >= configuredLimits.maxConcurrentJobsPerTenant) {
       return { allowed: false, reason: 'Tenant concurrent-job quota exceeded' };
     }
     const cutoff = now - DAY_MS;
-    const recent = tenantJobs.filter(job => {
-      const created = Date.parse(job.createdAt || '');
-      return Number.isFinite(created) && created >= cutoff;
-    }).length;
+    const recent = Number.isSafeInteger(persistedDailyCount) && persistedDailyCount >= 0
+      ? persistedDailyCount
+      : tenantJobs.filter(job => {
+        const created = Date.parse(job.createdAt || '');
+        return Number.isFinite(created) && created >= cutoff;
+      }).length;
     if (recent >= configuredLimits.maxJobsPerDay) {
       return { allowed: false, reason: 'Tenant daily-job quota exceeded' };
     }
