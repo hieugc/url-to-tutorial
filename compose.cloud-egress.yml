@@ -1,9 +1,6 @@
 services:
   egress-proxy:
-    build:
-      context: .
-      dockerfile: Dockerfile.egress-proxy
-    image: url-to-tutorial-egress-proxy:local
+    image: ${TUTORIAL_EGRESS_PROXY_IMAGE:?Set a prebuilt egress proxy image; use an immutable digest in production}
     container_name: url-tutorial-egress-proxy
     environment:
       EGRESS_PROXY_HOST: 0.0.0.0
