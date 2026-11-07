@@ -611,3 +611,83 @@ test('Cloud API audit chain verifies token and job events on the active store', 
   assert.equal(studio.store.verifyCloudAuditChain().valid, true);
   assert.equal(studio.store.cloudAuditEvents('tenant-a')[0].action, 'project.access_denied');
 });
+
+
+test('Cloud API meters tenant jobs and enforces a durable monthly job budget', async t => {
+  const root = await temp();
+  const studio = createStudioServer(serverOptions(root, {
+    cloudLimits: { maxJobsPerMonth: 1, maxStorageBytesPerTenant: 4 * 1024 * 1024,
+      maxOutputBytesPerJob: 1024 * 1024 },
+    cloudPricing: { workerCostPerSecondMicros: 100, artifactCostPerMiBMicros: 50 },
+    cloudWorker: async job => {
+      await writeFile(path.join(job.outputDir, 'usage.bin'), Buffer.alloc(1024 * 1024, 7));
+      return result;
+    },
+  }));
+  const origin = await listen(studio.server);
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const first = await call(origin, '/api/discover', {
+    method: 'POST', token: tokenA, projectId: 'project-a',
+    body: { url: 'https://example.com', language: 'en', maxPages: 1 },
+  });
+  assert.equal(first.status, 202);
+  assert.equal((await waitForJob(origin, first.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+
+  const usage = await call(origin, '/api/usage', { token: tokenA, projectId: 'project-a' });
+  assert.equal(usage.status, 200);
+  assert.equal(usage.data.tenantId, 'tenant-a');
+  assert.equal(usage.data.estimateOnly, true);
+  assert.equal(usage.data.usage.jobs, 1);
+  assert.equal(usage.data.usage.artifactBytes, 1024 * 1024);
+  assert.equal(usage.data.usage.storageBytes, 1024 * 1024);
+  assert.ok(usage.data.usage.workerMs >= 0);
+  assert.equal(usage.data.usage.estimatedCostMicros, 150 + Math.ceil(usage.data.usage.workerMs / 1000) * 100);
+
+  const blocked = await call(origin, '/api/discover', {
+    method: 'POST', token: tokenA, projectId: 'project-a2',
+    body: { url: 'https://example.org', language: 'en', maxPages: 1 },
+  });
+  assert.equal(blocked.status, 429);
+  assert.match(blocked.data.error, /monthly job budget/);
+  const otherTenant = await call(origin, '/api/usage', { token: tokenB, projectId: 'project-b' });
+  assert.equal(otherTenant.status, 200);
+  assert.equal(otherTenant.data.usage.jobs, 0);
+});
+
+test('Cloud API reserves tenant storage before admission and enforces output byte ceilings', async t => {
+  const root = await temp();
+  const studio = createStudioServer(serverOptions(root, {
+    cloudLimits: { maxJobsPerMonth: 10, maxStorageBytesPerTenant: 1024 * 1024,
+      maxOutputBytesPerJob: 1024 * 1024 },
+    cloudWorker: async job => {
+      await writeFile(path.join(job.outputDir, 'usage.bin'), Buffer.alloc(1024 * 1024, 9));
+      return result;
+    },
+  }));
+  const origin = await listen(studio.server);
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const first = await call(origin, '/api/discover', {
+    method: 'POST', token: tokenA, projectId: 'project-a',
+    body: { url: 'https://example.com', language: 'en', maxPages: 1 },
+  });
+  assert.equal(first.status, 202);
+  assert.equal((await waitForJob(origin, first.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+
+  const blocked = await call(origin, '/api/discover', {
+    method: 'POST', token: tokenA, projectId: 'project-a2',
+    body: { url: 'https://example.org', language: 'en', maxPages: 1 },
+  });
+  assert.equal(blocked.status, 429);
+  assert.match(blocked.data.error, /storage budget/);
+  const usage = await call(origin, '/api/usage', { token: tokenA, projectId: 'project-a' });
+  assert.equal(usage.data.usage.storageBytes, 1024 * 1024);
+  assert.equal(usage.data.usage.reservedStorageBytes, 0);
+});
