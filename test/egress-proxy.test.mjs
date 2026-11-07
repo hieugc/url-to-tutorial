@@ -12,7 +12,6 @@ async function listen(server) {
 }
 
 async function close(server) {
-  for (const socket of server._connections ? [] : []) socket.destroy();
   if (server.listening) await new Promise(resolve => server.close(resolve));
 }
 
