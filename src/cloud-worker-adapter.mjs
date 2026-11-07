@@ -92,6 +92,7 @@ export function buildDockerWorkerRunArgs({
     '--pids-limit=' + pidsLimit,
     '--memory=' + memoryLimit,
     '--memory-swap=' + memoryLimit,
+    '--shm-size=256m',
     '--cpus=' + cpuLimit,
     '--ulimit', 'nofile=1024:1024',
     '--user', uid + ':' + gid,
@@ -243,7 +244,11 @@ export function createDockerWorkerAdapter({
       await safeDocker(['rm', '-f', containerName]);
       if (networkCreated) {
         await safeDocker(['network', 'disconnect', '--force', networkName, proxyContainer]);
-        await safeDocker(['network', 'rm', networkName]);
+        const removed = await safeDocker(['network', 'rm', networkName]);
+        if (!removed) {
+          throw new Error('Failed to remove isolated worker network ' + networkName +
+            '; verify Docker daemon state and remove the labeled network before accepting more jobs');
+        }
       }
     }
   };
