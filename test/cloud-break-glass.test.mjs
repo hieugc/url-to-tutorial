@@ -126,7 +126,7 @@ test('break-glass requires two distinct MFA-verified operators and a one-time ap
     proposal.requestId,
   ), /not executable|already/i);
   assert.ok(audits.some(event => event.action === 'cloud.break_glass.proposed'));
-  assert.ok(audits.some(event => event.action === 'cloud.break_glass.approved'));
+  assert.ok(audits.some(event => event.action === 'cloud.break_glass.approval_authorized'));
   assert.ok(audits.some(event => event.action === 'cloud.break_glass.execution_started'));
   assert.ok(audits.some(event => event.action === 'cloud.break_glass.completed'));
 });
