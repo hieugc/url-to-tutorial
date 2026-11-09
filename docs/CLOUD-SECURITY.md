@@ -128,13 +128,15 @@ There is no tenant-facing or public HTTP endpoint. Wire this service only in a t
 import { createPostgresBreakGlassStore } from '../src/cloud-break-glass-postgres.mjs';
 import {
   createBreakGlassRecovery,
+  createStudioBreakGlassAuditRecorder,
   createTokenAdminBreakGlassExecutor,
 } from '../src/cloud-break-glass.mjs';
 
+const { store, tokenAdmin } = studio; // trusted createStudioServer() result; never expose to tenants
 const breakGlass = createBreakGlassRecovery({
   approvalStore: createPostgresBreakGlassStore({ pool }),
   operatorAuthenticator,
-  auditRecorder, // append to the existing tamper-evident audit chain
+  auditRecorder: createStudioBreakGlassAuditRecorder({ store }),
   actionExecutor: createTokenAdminBreakGlassExecutor({ tokenAdmin }),
 });
 
