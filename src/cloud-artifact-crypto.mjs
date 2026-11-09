@@ -140,6 +140,28 @@ async function readExactly(handle, length, position) {
   return buffer;
 }
 
+async function verifyEncryptedFile(handle, info, parsed, context) {
+  let position = HEADER_BYTES;
+  let remaining = parsed.plainSize;
+  for (let index = 0; index < parsed.chunkCount; index++) {
+    const expectedLength = Math.min(parsed.chunkSize, remaining);
+    const record = await readExactly(handle, 32, position);
+    if (record.readUInt32BE(0) !== expectedLength) {
+      throw new Error('Cloud artifact authenticated record is invalid');
+    }
+    position += 32;
+    const encrypted = await readExactly(handle, expectedLength, position);
+    position += expectedLength;
+    decryptChunk(
+      record, encrypted, parsed.key, context, index, parsed.plainSize, parsed.keyId,
+    );
+    remaining -= expectedLength;
+  }
+  if (remaining !== 0 || position !== info.size) {
+    throw new Error('Cloud artifact contains trailing or missing data');
+  }
+}
+
 async function writeExactly(handle, buffer) {
   let offset = 0;
   while (offset < buffer.length) {
@@ -253,6 +275,7 @@ export function createCloudArtifactCipher({
       if (prefix.equals(MAGIC)) {
         const header = Buffer.concat([prefix, await readExactly(source, HEADER_BYTES - prefix.length, prefix.length)]);
         const parsed = parseHeader(header, info.size, ring.keys);
+        await verifyEncryptedFile(source, info, parsed, context);
         return { plaintextBytes: 0, encryptedBytes: info.size, alreadyEncrypted: true, keyId: parsed.keyId };
       }
 
