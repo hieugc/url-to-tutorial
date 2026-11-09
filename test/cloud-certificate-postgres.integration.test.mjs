@@ -39,7 +39,7 @@ test('PostgreSQL certificate store enforces one active certificate per replica a
   await storeB.stageCertificate(makeBundle(secondId, 'b', '1002'));
   await assert.rejects(storeA.activateCertificate({
     replicaId, bundleId: secondId, expectedPreviousBundleId: randomUUID(),
-  }), /active certificate changed/i);
+  }), /active replica certificate changed/i);
 
   await storeA.activateCertificate({
     replicaId, bundleId: secondId, expectedPreviousBundleId: firstId,
