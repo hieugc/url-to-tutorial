@@ -59,6 +59,8 @@ function sinkFor(client) {
     bucket: 'audit-archive-test',
     prefix: 'cloud/audit',
     replicaId: 'api-a',
+    kmsKeyId: 'arn:aws:kms:ap-southeast-1:123456789012:key/12345678-1234-1234-1234-123456789012',
+    retentionDays: 365,
     commands: { GetObjectCommand, PutObjectCommand },
   });
 }
@@ -70,6 +72,9 @@ test('S3 audit archive appends immutable batch and advances checkpoint with exac
   assert.equal(result.throughSequence, 2);
   assert.equal(result.throughHash, batch().throughHash);
   assert.equal(client.objects.size, 2);
+  const batchPut = [...client.objects.keys()].find(key => key.includes('/batches/'));
+  assert.ok(batchPut);
+
   const checkpoint = JSON.parse(client.objects.get(
     'audit-archive-test/cloud/audit/api-a/checkpoint.json',
   ).body);
