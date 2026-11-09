@@ -10,7 +10,7 @@ const jobId = '11111111-1111-4111-8111-111111111111';
 const otherJobId = '22222222-2222-4222-8222-222222222222';
 
 function keyRing(materials, activeIndex = materials.length - 1) {
-  const keys = Object.create(null);
+  const keys = {};
   for (const material of materials) {
     const bytes = Buffer.isBuffer(material) ? material : Buffer.from(material, 'hex');
     const id = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
