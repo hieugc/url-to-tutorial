@@ -446,3 +446,29 @@ test('Cloud bootstrap fails closed when Docker network reconciliation reports a 
   }), /Cloud Docker network recovery failed/);
   assert.equal(closed, true);
 });
+
+test('Cloud bootstrap refuses in-process artifact key-ring changes that could strand retained ciphertext', async () => {
+  const nextArtifactKey = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+  const nextArtifactKeyId = createHash('sha256')
+    .update(Buffer.from(nextArtifactKey, 'hex')).digest('hex').slice(0, 16);
+  let current = snapshot('1');
+  const bootstrap = await createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => current },
+    operatorAuthenticator: {
+      authorize: async () => ({ mfaVerified: true, actorId: 'ops-admin' }),
+    },
+    createStudioServerImpl: fakeFactory(),
+  });
+  current = {
+    ...snapshot('2', tokenB),
+    artifactKeyRing: {
+      activeKeyId: nextArtifactKeyId,
+      keys: {
+        [artifactKeyId]: artifactKey,
+        [nextArtifactKeyId]: nextArtifactKey,
+      },
+    },
+  };
+  await assert.rejects(bootstrap.reloadTokens({}), /Artifact key ring changes require a coordinated restart/);
+  assert.equal(bootstrap.status().secretVersion, '1');
+});
