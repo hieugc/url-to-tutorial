@@ -144,5 +144,5 @@ test('cloud artifact APIs validate key material, identities and plaintext size l
   const cipher = createCloudArtifactCipher({ keyRing: oldRing });
   assert.throws(() => cipher.encryptBuffer(Buffer.from('x'), { jobId: '../escape', filename: 'file' }), /identity/i);
   const encrypted = cipher.encryptBuffer(Buffer.from('too large'), { jobId, filename: 'file' });
-  assert.throws(() => cipher.decryptBuffer(encrypted, { jobId, filename: 'file', maxBytes: 2 }), /size limit/i);
+  assert.throws(() => cipher.decryptBuffer(encrypted, { jobId, filename: 'file' }, 2), /size limit/i);
 });
