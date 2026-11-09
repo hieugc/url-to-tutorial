@@ -206,6 +206,7 @@ export function createReplicaCertificateLifecycle({
             code: 'REPLICA_CERTIFICATE_ADAPTER_INVALID',
           });
         }
+        installed = true;
         await replica.installCertificate({
           bundleId,
           certificatePem: issued.certificatePem,
@@ -213,7 +214,6 @@ export function createReplicaCertificateLifecycle({
           keyRef: keyMaterial.keyRef,
           fingerprint256: metadata.fingerprint256,
         });
-        installed = true;
 
         const observed = await replica.verifyCertificate({
           bundleId,
