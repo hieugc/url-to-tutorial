@@ -184,6 +184,28 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
     });
   }
 
+  async function renewRollout(input) {
+    assertInput(input, ['rolloutId', 'leaseToken']);
+    if (typeof input.rolloutId !== 'string' || !ROLLOUT_ID.test(input.rolloutId)) {
+      throw new TypeError('A valid rollout ID is required');
+    }
+    const lease = parseLeaseToken(input.leaseToken);
+    return run(async client => {
+      const result = await client.query(
+        `UPDATE tutorial_credential_rollouts
+            SET lease_expires_at = clock_timestamp() + ($4 * interval '1 millisecond'),
+                updated_at = clock_timestamp()
+          WHERE rollout_id = $1 AND state = 'in_progress'
+            AND lease_owner = $2::uuid AND fencing_token = $3::bigint
+            AND lease_expires_at > clock_timestamp()
+          RETURNING rollout_id`,
+        [input.rolloutId, lease.ownerId, lease.fencingToken, leaseMs],
+      );
+      if (result.rowCount !== 1) throw new Error('Rollout lease expired or fencing token no longer owns the record');
+      return { renewed: true };
+    });
+  }
+
   async function recordReplicaAck(input) {
     assertInput(input, ['rolloutId', 'leaseToken', 'replicaId', 'targetVersion', 'actorId', 'tokenIds', 'auditKeyRing']);
     const lease = parseLeaseToken(input.leaseToken);
@@ -323,6 +345,8 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
     beginRollout,
     getRollout,
     resumeRollout,
+    renewRollout,
+    renewIntervalMs: Math.max(1_000, Math.floor(leaseMs / 3)),
     recordReplicaAck,
     recordReplicaFailure,
     markPartialRollout,
