@@ -208,7 +208,8 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
                     'auditKeyRing', $7::jsonb, 'actorId', $8)),
                 failures = failures - $4, failed_replica_ids = failed_replica_ids - $4,
                 updated_at = clock_timestamp()
-          WHERE rollout_id = $1 AND lease_owner = $2::uuid AND fencing_token = $3::bigint`,
+          WHERE rollout_id = $1 AND lease_owner = $2::uuid AND fencing_token = $3::bigint
+            AND replica_ids ? $4`,
         [input.rolloutId, lease.ownerId, lease.fencingToken, input.replicaId,
           input.targetVersion, JSON.stringify([...input.tokenIds].sort()),
           JSON.stringify(input.auditKeyRing), input.actorId],
@@ -235,7 +236,8 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
                 failed_replica_ids = (SELECT COALESCE(jsonb_agg(DISTINCT item ORDER BY item), '[]'::jsonb)
                   FROM jsonb_array_elements_text(failed_replica_ids || jsonb_build_array($4)) AS existing(item)),
                 updated_at = clock_timestamp()
-          WHERE rollout_id = $1 AND lease_owner = $2::uuid AND fencing_token = $3::bigint`,
+          WHERE rollout_id = $1 AND lease_owner = $2::uuid AND fencing_token = $3::bigint
+            AND replica_ids ? $4`,
         [input.rolloutId, lease.ownerId, lease.fencingToken, input.replicaId, input.errorCode],
       );
       if (result.rowCount !== 1) throw new Error('Rollout lease ownership changed');
@@ -253,6 +255,16 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
     }
     return run(async client => {
       await requireLease(client, input, lease);
+      const current = await client.query(
+        'SELECT replica_ids, acknowledged FROM tutorial_credential_rollouts WHERE rollout_id = $1 FOR UPDATE',
+        [input.rolloutId],
+      );
+      if (current.rowCount !== 1) throw new Error('Rollout record is missing');
+      const registered = current.rows[0].replica_ids;
+      if ([...acknowledged, ...failed].some(id => !registered.includes(id)) ||
+          JSON.stringify(Object.keys(current.rows[0].acknowledged ?? {}).sort()) !== JSON.stringify(acknowledged)) {
+        throw new Error('Partial rollout replica state does not match persisted acknowledgements');
+      }
       const result = await client.query(
         `UPDATE tutorial_credential_rollouts
             SET state = 'partial', failed_replica_ids = $4::jsonb,
