@@ -948,3 +948,18 @@ test('Cloud artifacts and persisted job records are encrypted at rest and decryp
   });
   assert.equal(crossTenant.status, 404);
 });
+
+test('Cloud API returns 503 until persisted artifact protection has completed', async t => {
+  const root = await temp();
+  const studio = createStudioServer(serverOptions(root));
+  await new Promise(resolve => studio.server.listen(0, '127.0.0.1', resolve));
+  const origin = 'http://127.0.0.1:' + studio.server.address().port;
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  assert.equal((await call(origin, '/api/health')).status, 503);
+  await studio.protectCloudArtifacts();
+  assert.equal((await call(origin, '/api/health')).status, 200);
+});
