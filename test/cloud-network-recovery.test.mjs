@@ -16,7 +16,7 @@ function network(id, containers = {}) {
   };
 }
 
-function fakeDocker(networks) {
+function fakeDocker(networks, { afterDisconnect } = {}) {
   const calls = [];
   return {
     calls,
@@ -30,8 +30,11 @@ function fakeDocker(networks) {
         return { stdout: JSON.stringify([item]) };
       }
       if (args[0] === 'network' && args[1] === 'disconnect') {
-        const item = networks.find(value => value.Name === args[4]);
-        if (item) item.Containers = {};
+        const item = networks.find(value => value.Name === args[3]);
+        if (item) {
+          item.Containers = {};
+          afterDisconnect?.(item);
+        }
         return { stdout: '' };
       }
       if (args[0] === 'network' && args[1] === 'rm') return { stdout: '' };
@@ -104,4 +107,23 @@ test('reconciliation validates job IDs before invoking Docker', async () => {
     /active job IDs must be UUIDs/,
   );
   assert.deepEqual(fixture.calls, []);
+});
+
+test('reconciliation rechecks endpoints after proxy detach and preserves a network that becomes active', async () => {
+  const item = network(orphanId, { proxy: { Name: 'url-tutorial-egress-proxy' } });
+  const fixture = fakeDocker([item], {
+    afterDisconnect(value) {
+      value.Containers = { worker: { Name: 'utv-worker-' + orphanId } };
+    },
+  });
+  const result = await reconcileOrphanedCloudNetworks({
+    activeJobIds: [],
+    runDockerImpl: fixture.run,
+  });
+
+  assert.deepEqual(result.removed, []);
+  assert.deepEqual(result.skipped, [
+    { network: 'utv-job-' + orphanId, reason: 'network-changed-during-reconciliation' },
+  ]);
+  assert.equal(fixture.calls.some(args => args[0] === 'network' && args[1] === 'rm'), false);
 });
