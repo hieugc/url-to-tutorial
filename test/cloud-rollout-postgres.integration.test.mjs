@@ -33,6 +33,16 @@ test('PostgreSQL rollout store persists acknowledgements, fences stale coordinat
     replicaIds,
   });
   assert.ok(firstLease.leaseToken.length >= 16);
+  const beforeRenewal = await admin.query(
+    'SELECT lease_expires_at FROM tutorial_credential_rollouts WHERE rollout_id = $1',
+    [rolloutId],
+  );
+  await storeA.renewRollout({ rolloutId, leaseToken: firstLease.leaseToken });
+  const afterRenewal = await admin.query(
+    'SELECT lease_expires_at FROM tutorial_credential_rollouts WHERE rollout_id = $1',
+    [rolloutId],
+  );
+  assert.ok(afterRenewal.rows[0].lease_expires_at > beforeRenewal.rows[0].lease_expires_at);
 
   await assert.rejects(storeB.beginRollout({
     rolloutId: 'rollout-' + randomUUID(),
