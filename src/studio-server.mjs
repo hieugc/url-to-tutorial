@@ -133,7 +133,11 @@ async function openJobArtifact(outputRoot, jobId, filename, maxBytes) {
   }
 }
 
-async function readJobJson(outputRoot, jobId, filename, maxBytes = 2 * 1024 * 1024) {
+async function readJobJson(outputRoot, jobId, filename, maxBytes = 2 * 1024 * 1024, artifactCipher = null) {
+  if (artifactCipher) {
+    const buffer = await artifactCipher.readFile(outputRoot, jobId, filename, maxBytes);
+    return JSON.parse(buffer.toString('utf8'));
+  }
   const { handle } = await openJobArtifact(outputRoot, jobId, filename, maxBytes);
   try {
     const buffer = Buffer.alloc(maxBytes + 1);
@@ -191,9 +195,19 @@ function nonNegativeCloudRate(value, fallback, name) {
   return result;
 }
 
+async function openStudioArtifact(artifactCipher, outputRoot, jobId, filename, maxBytes) {
+  return artifactCipher
+    ? artifactCipher.openReadStream(outputRoot, jobId, filename, maxBytes)
+    : openJobArtifact(outputRoot, jobId, filename, maxBytes);
+}
+
+function artifactByteLength(opened) {
+  return opened.info?.size ?? opened.size;
+}
+
 function streamJobArtifact(res, opened, headers) {
   res.writeHead(200, headers);
-  const stream = opened.handle.createReadStream();
+  const stream = opened.stream || opened.handle.createReadStream();
   stream.on('error', () => res.destroy());
   return stream.pipe(res);
 }
@@ -573,14 +587,26 @@ export function createStudioServer({
           job.status = 'running';
           store.save(job);
           try {
-            let artifactBytes = await directoryBytes(job.outputDir);
+            let artifactBytes = 0;
             let finalStatus = terminalStatus;
             let finalError = job.error;
-            if (artifactBytes > maxOutputBytesPerJob) {
-              rmSync(job.outputDir, { recursive: true, force: true });
+            try {
+              const plaintextBytes = await directoryBytes(job.outputDir);
+              if (plaintextBytes > maxOutputBytesPerJob) {
+                throw new Error('Cloud worker output exceeded the tenant storage reservation');
+              }
+              await artifactCipher.encryptDirectory(outputRoot, job.id);
+              artifactBytes = await directoryBytes(job.outputDir);
+              if (artifactBytes > maxOutputBytesPerJob) {
+                throw new Error('Encrypted cloud worker output exceeded the tenant storage reservation');
+              }
+            } catch (artifactError) {
+              rmSync(path.join(path.resolve(outputRoot), job.id), { recursive: true, force: true });
               artifactBytes = 0;
               finalStatus = 'failed';
-              finalError = 'Cloud worker output exceeded the tenant storage reservation';
+              finalError = artifactError.message.includes('storage reservation')
+                ? artifactError.message
+                : 'Cloud artifact encryption failed; output was removed';
             }
             const workerMs = Math.max(0, Date.parse(job.finishedAt) - Date.parse(job.startedAt || job.createdAt));
             const period = new Date(job.createdAt).toISOString().slice(0, 7);
@@ -691,7 +717,7 @@ export function createStudioServer({
           // Persisted/recovered jobs may have no in-memory result object. The
           // report file is the durable fallback for both running and terminal
           // jobs; readJobJson still enforces O_NOFOLLOW and the size ceiling.
-          try { report = await readJobJson(outputRoot, job.id, 'report.json'); }
+          try { report = await readJobJson(outputRoot, job.id, 'report.json', 2 * 1024 * 1024, artifactCipher); }
           catch { /* missing, symlinked, oversized or not yet written */ }
         }
         const data = { id: job.id, type: job.type, status: job.status,
@@ -726,9 +752,9 @@ export function createStudioServer({
           return json(res, 404, { error: 'Video is not ready' });
         }
         let opened;
-        try { opened = await openJobArtifact(outputRoot, job.id, 'tutorial.mp4', 1024 * 1024 * 1024); }
+        try { opened = await openStudioArtifact(artifactCipher, outputRoot, job.id, 'tutorial.mp4', 1024 * 1024 * 1024); }
         catch { return json(res, 404, { error: 'MP4 missing or unsafe' }); }
-        return streamJobArtifact(res, opened, { 'Content-Type': 'video/mp4', 'Content-Length': opened.info.size,
+        return streamJobArtifact(res, opened, { 'Content-Type': 'video/mp4', 'Content-Length': artifactByteLength(opened),
           'Content-Disposition': 'attachment; filename="tutorial.mp4"', 'Cache-Control': 'no-store' });
       }
 
@@ -741,7 +767,7 @@ export function createStudioServer({
         }
         const ext = subtitlesPath[2].toLowerCase();
         let opened;
-        try { opened = await openJobArtifact(outputRoot, job.id, 'tutorial.' + ext, 1024 * 1024); }
+        try { opened = await openStudioArtifact(artifactCipher, outputRoot, job.id, 'tutorial.' + ext, 1024 * 1024); }
         catch { return json(res, 404, { error: 'Subtitle file missing or unsafe' }); }
         return streamJobArtifact(res, opened, {
           'Content-Type': ext === 'srt' ? 'application/x-subrip; charset=utf-8' : 'text/vtt; charset=utf-8',
@@ -990,7 +1016,7 @@ export function createStudioServer({
     // their terminal state. A hard process kill is recovered as interrupted.
     queue.finally(() => store.close());
   });
-  return { server, jobs, store, tokenAdmin, auditAdmin };
+  return { server, jobs, store, tokenAdmin, auditAdmin, protectCloudArtifacts };
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
