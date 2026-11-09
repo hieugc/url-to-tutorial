@@ -46,6 +46,7 @@ test('reconciliation removes only an orphaned internal job network after detachi
   ]);
   const result = await reconcileOrphanedCloudNetworks({
     dockerBin: 'docker',
+    activeJobIds: [],
     proxyContainer: 'url-tutorial-egress-proxy',
     runDockerImpl: fixture.run,
   });
@@ -86,6 +87,7 @@ test('reconciliation refuses networks without the exact app labels and internal 
   const unsafe = network(orphanId, { proxy: { Name: 'url-tutorial-egress-proxy' } });
   unsafe.Internal = false;
   const result = await reconcileOrphanedCloudNetworks({
+    activeJobIds: [],
     runDockerImpl: fakeDocker([unsafe]).run,
   });
 
