@@ -71,8 +71,12 @@ test('PostgreSQL break-glass store enforces distinct approval, expiry and one-ti
     resourceId: 'service-a',
     purpose: 'Emergency disablement after confirmed principal compromise',
     proposerId: 'operator-alpha',
-    expiresAt: new Date(Date.now() - 1000).toISOString(),
+    expiresAt,
   });
+  await admin.query(
+    "UPDATE tutorial_break_glass_requests SET expires_at = clock_timestamp() - interval '1 second' WHERE request_id = $1::uuid",
+    [expiredId],
+  );
   await assert.rejects(storeB.approveRequest({
     requestId: expiredId, approverId: 'operator-beta',
   }), /expired|not permitted/i);
