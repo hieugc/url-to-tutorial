@@ -340,22 +340,47 @@ The sequence above is illustrative: a production operator workflow must coordina
 - Only after the exact acknowledgement does SQLite advance its archive checkpoint, using a transaction and compare-and-set against the previous sequence. Concurrent archive attempts cannot move the checkpoint backwards or skip a sequence.
 - If the external append succeeds but the local checkpoint write fails, the same batch will be retried. The external sink therefore MUST deduplicate by sequence and reject conflicting payloads for an already stored sequence.
 - The archive checkpoint is local operational state. It does not itself prove the external copy is immutable or independently administered. Store the external checkpoint separately from the API host and verify it during disaster recovery.
-- The repository exposes the trusted archive callback and checkpoint protocol, but does not ship a vendor-specific sink, retention deletion or archival scheduler. Versioned key rotation is available through `auditAdmin.rotateSigningKey`; every replica must retain historical verification keys and complete rotation before the secret manager's active key changes. Do not delete local audit rows until an independently operated sink, external checkpoint, restore test and retention policy have been deployed and verified.
+- `src/cloud-audit-archive-s3.mjs` provides an AWS SDK v3 S3 sink. It writes deterministic immutable batch objects and immutable checkpoint-history objects with conditional create, KMS encryption and S3 Object Lock COMPLIANCE retention. A separate `checkpoint.json` pointer advances with ETag compare-and-swap; retries verify the exact existing batch bytes and conflicting payloads are rejected.
+- `src/cloud-audit-archive-scheduler.mjs` provides an opt-in bounded scheduler. It coalesces overlapping runs, drains at most the configured batch count, catches scheduled failures through `onError`, and exposes `stop()` for graceful shutdown. It is not started automatically.
+- `createCloudStudioFromSecretManager` exposes only the narrow host capability `archiveAuditBatch`; it does not expose the full `auditAdmin`, SQLite store, signing keys or token administration. Pass this function to the scheduler after cloud bootstrap.
+- Configure the S3 bucket with versioning and Object Lock enabled, use a dedicated KMS key, restrict the archive role to `GetObject`/`PutObject` on its replica prefix, and deny `DeleteObject` to the runtime role. The immutable batch and checkpoint-history objects request COMPLIANCE retention; the mutable pointer is protected by conditional writes and bucket version history. The S3 adapter does not create or configure the bucket, KMS key, IAM policy, replication or CloudTrail.
+- The archive checkpoint remains external to the API host and should be independently copied/verified during disaster recovery. Do not delete local audit rows until the external archive, checkpoint restore procedure and retention policy have been deployed and tested.
 
 Trusted host-code shape:
 
 ```js
-const studio = createStudioServer({
-  cloudMode: true,
-  cloudAuditArchive: async batch => {
-    // Append each event idempotently by sequence to an independently
-    // administered append-only store, then return its durable last sequence/hash.
-    return externalArchive.appendBatch(batch);
-  },
-  // other required cloud settings...
-});
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { createCloudStudioFromSecretManager } from '../src/cloud-bootstrap.mjs';
+import { createS3AuditArchiveSink } from '../src/cloud-audit-archive-s3.mjs';
+import { createAuditArchiveScheduler } from '../src/cloud-audit-archive-scheduler.mjs';
 
-await studio.auditAdmin.archiveBatch({ limit: 500 });
+const s3 = new S3Client({ region: 'ap-southeast-1' }); // workload identity; no static keys
+const archive = createS3AuditArchiveSink({
+  client: s3,
+  bucket: process.env.AUDIT_ARCHIVE_BUCKET,
+  prefix: 'url-to-tutorial/audit',
+  replicaId: process.env.CLOUD_REPLICA_ID,
+  kmsKeyId: process.env.AUDIT_ARCHIVE_KMS_KEY_ARN,
+  retentionDays: 365,
+  commands: { GetObjectCommand, PutObjectCommand },
+});
+const cloud = await createCloudStudioFromSecretManager({
+  secretManager,
+  operatorAuthenticator,
+  serverOptions: { ...cloudServerOptions, cloudAuditArchive: archive.archiveBatch },
+});
+const scheduler = createAuditArchiveScheduler({
+  archiveBatch: cloud.archiveAuditBatch,
+  batchLimit: 500,
+  intervalMs: 60_000,
+  maxBatchesPerRun: 10,
+  onError: error => logger.error({ code: 'AUDIT_ARCHIVE_FAILED', message: error.message }),
+});
+scheduler.start();
+
+// On host shutdown:
+await scheduler.stop();
+cloud.server.close();
 ```
 
 ## Disposable worker and outbound egress boundary
