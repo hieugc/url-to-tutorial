@@ -40,7 +40,7 @@ test('PostgreSQL rollout store persists acknowledgements, fences stale coordinat
     snapshotDigest: 'b'.repeat(64),
     actorId: 'security-operator',
     replicaIds,
-  }), /active rollout/i);
+  }), /already active/i);
 
   await storeA.recordReplicaAck({
     rolloutId, leaseToken: firstLease.leaseToken, replicaId: 'api-a',
