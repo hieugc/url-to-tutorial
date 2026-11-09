@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { StudioJobStore } from '../src/job-store.mjs';
@@ -98,7 +98,14 @@ test('cloud startup can migrate legacy plaintext job rows by re-saving them', as
     const raw = JSON.parse(migrated.db.prepare('SELECT json FROM studio_jobs WHERE id=?').get(jobId).json);
     assert.equal(raw.storageFormat, 'utv-cloud-job-record-v1');
     assert.equal(JSON.stringify(raw).includes('private report payload'), false);
+    assert.equal(migrated.compactEncryptedRecords(), true);
   } finally { migrated.close(); }
+  for (const name of await readdir(root)) {
+    if (!name.startsWith('studio-jobs.sqlite')) continue;
+    const bytes = await readFile(path.join(root, name));
+    assert.equal(bytes.includes(Buffer.from('private customer objective')), false);
+    assert.equal(bytes.includes(Buffer.from('private report payload')), false);
+  }
 });
 
 test('artifact encryption reconciles durable tenant storage and estimate-only usage with an audit event', async t => {
