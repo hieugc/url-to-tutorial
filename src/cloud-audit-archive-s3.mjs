@@ -153,13 +153,24 @@ export function createS3AuditArchiveSink({
     const retainUntil = new Date(archivedAtMs + retentionDays * 24 * 60 * 60_000);
     await putImmutable(batchKey, batchBody, retainUntil);
 
-    const nextCheckpoint = JSON.stringify({
+    const checkpointHistoryKey = root + '/checkpoints/' + last + '-' +
+      batch.throughHash + '.json';
+    const checkpointRecord = JSON.stringify({
       schemaVersion: 1,
       replicaId,
       throughSequence: batch.throughSequence,
       throughHash: batch.throughHash,
       batchKey,
       archivedAt,
+    });
+    await putImmutable(checkpointHistoryKey, checkpointRecord, retainUntil);
+
+    const nextCheckpoint = JSON.stringify({
+      schemaVersion: 1,
+      replicaId,
+      throughSequence: batch.throughSequence,
+      throughHash: batch.throughHash,
+      checkpointHistoryKey,
     });
     const input = {
       Bucket: bucket,
