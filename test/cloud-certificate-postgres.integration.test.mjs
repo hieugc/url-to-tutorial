@@ -26,6 +26,7 @@ test('PostgreSQL certificate store enforces one active certificate per replica a
     certificatePem: '-----BEGIN CERTIFICATE-----\npublic-cert\n-----END CERTIFICATE-----',
     chainPem: '-----BEGIN CERTIFICATE-----\npublic-chain\n-----END CERTIFICATE-----',
     keyRef: 'kms://key/' + bundleId,
+    publicKeyFingerprint: 'c'.repeat(64),
     notBefore: new Date(Date.now() - 1000).toISOString(),
     notAfter: new Date(Date.now() + 86400_000).toISOString(),
     actorId: 'security-operator',
