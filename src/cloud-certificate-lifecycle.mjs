@@ -115,6 +115,7 @@ export function createReplicaCertificateLifecycle({
 
       const bundleId = randomUUID();
       let keyMaterial;
+      let issued;
       let staged = false;
       let replica;
       let installed = false;
@@ -143,7 +144,7 @@ export function createReplicaCertificateLifecycle({
           });
         }
 
-        const issued = await certificateAuthority.issueCertificate({
+        issued = await certificateAuthority.issueCertificate({
           csrPem: keyMaterial.csrPem,
           replicaId,
           sanDns: [replicaId],
@@ -173,6 +174,11 @@ export function createReplicaCertificateLifecycle({
           now: now(),
           minimumValidityMs,
         });
+        if (metadata.serialNumber.toLowerCase() !== issued.serialNumber.toLowerCase()) {
+          throw Object.assign(new Error('Certificate serial number does not match CA issuance result'), {
+            code: 'CERTIFICATE_AUTHORITY_INVALID',
+          });
+        }
 
         const record = {
           bundleId,
@@ -305,6 +311,17 @@ export function createReplicaCertificateLifecycle({
             await certificateStore.markFailed({ bundleId, errorCode: safeErrorCode(error) });
           } catch {
             throw new Error('Failed certificate state could not be durably recorded; manual review is required');
+          }
+        }
+        if (issued?.serialNumber && SERIAL.test(issued.serialNumber)) {
+          try {
+            await certificateAuthority.revokeCertificate({
+              serialNumber: issued.serialNumber,
+              reason: 'superseded',
+              idempotencyKey: bundleId + ':revoke-failed-issuance',
+            });
+          } catch {
+            throw new Error('Failed certificate could not be revoked at the CA; manual review is required');
           }
         }
         if (keyMaterial?.keyRef) {
