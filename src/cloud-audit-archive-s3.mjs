@@ -120,9 +120,25 @@ export function createS3AuditArchiveSink({
     if (checkpointObject) {
       try { checkpoint = JSON.parse(checkpointObject.body); }
       catch { throw new Error('S3 audit archive checkpoint is malformed'); }
-      if (!Number.isSafeInteger(checkpoint.throughSequence) || checkpoint.throughSequence < 0 ||
-          !HASH.test(checkpoint.throughHash || '') || typeof checkpointObject.etag !== 'string') {
+      if (checkpoint.schemaVersion !== 1 || checkpoint.replicaId !== replicaId ||
+          !Number.isSafeInteger(checkpoint.throughSequence) || checkpoint.throughSequence < 0 ||
+          !HASH.test(checkpoint.throughHash || '') ||
+          typeof checkpoint.checkpointHistoryKey !== 'string' ||
+          !checkpoint.checkpointHistoryKey.startsWith(root + '/checkpoints/') ||
+          typeof checkpointObject.etag !== 'string') {
         throw new Error('S3 audit archive checkpoint is invalid');
+      }
+      const historyObject = await readObject(checkpoint.checkpointHistoryKey);
+      if (!historyObject) throw new Error('S3 audit archive checkpoint history is missing');
+      try {
+        const history = JSON.parse(historyObject.body);
+        if (history.schemaVersion !== 1 || history.replicaId !== replicaId ||
+            history.throughSequence !== checkpoint.throughSequence ||
+            history.throughHash !== checkpoint.throughHash) {
+          throw new Error('mismatch');
+        }
+      } catch {
+        throw new Error('S3 audit archive checkpoint history is invalid');
       }
     }
 
