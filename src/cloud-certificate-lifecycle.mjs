@@ -394,7 +394,7 @@ export function createStudioCertificateAuditRecorder({ store } = {}) {
             (typeof event.resultCode !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(event.resultCode)))) {
         throw new TypeError('Certificate audit event is invalid');
       }
-      store.recordCloudAudit({
+      await store.recordCloudAudit({
         tenantId: 'platform',
         principalId: event.actorId,
         action: event.action,
