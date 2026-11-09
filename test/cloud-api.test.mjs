@@ -17,6 +17,8 @@ const tokens = [
 ];
 
 const temp = () => mkdtemp(path.join(tmpdir(), 'tutorial-cloud-api-'));
+const artifactKey = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+const artifactKeyId = createHash('sha256').update(Buffer.from(artifactKey, 'hex')).digest('hex').slice(0, 16);
 
 function call(origin, route, {
   method = 'GET', token, projectId, body, host = 'api.example.test', originHeader,
@@ -51,7 +53,11 @@ function call(origin, route, {
   });
 }
 
-async function listen(server) {
+async function listen(serverOrStudio) {
+  if (typeof serverOrStudio?.protectCloudArtifacts === 'function') {
+    await serverOrStudio.protectCloudArtifacts();
+  }
+  const server = serverOrStudio.server || serverOrStudio;
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   return 'http://127.0.0.1:' + server.address().port;
 }
@@ -77,6 +83,7 @@ function serverOptions(outputRoot, overrides = {}) {
     outputRoot, cloudMode: true, cloudTokens: tokens,
     cloudAllowedHosts: ['api.example.test'], cloudTrustedProxy: true,
     cloudAuditKey: 'test-only-cloud-audit-signing-key-0123456789abcdef',
+    cloudArtifactKeyRing: { activeKeyId: artifactKeyId, keys: { [artifactKeyId]: artifactKey } },
     cloudPreflight: async value => {
       const target = new URL(value);
       if (target.protocol !== 'https:' || ['localhost', '127.0.0.1',
@@ -113,7 +120,7 @@ test('Cloud API authenticates every tenant route and enforces project-scoped job
   /isolated-worker adapter/);
   const root = await temp();
   const studio = createStudioServer(serverOptions(root));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -175,7 +182,7 @@ test('Cloud API applies tenant-wide concurrent and rolling daily job quotas', as
       return result;
     },
   }));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -219,7 +226,7 @@ test('Cloud API rate-limits per tenant and emits Retry-After', async t => {
   const studio = createStudioServer(serverOptions(root, {
     cloudLimits: { maxRequestsPerMinute: 2 },
   }));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   let activeServer = studio.server;
   t.after(async () => {
     if (activeServer.listening) await new Promise(resolve => activeServer.close(resolve));
@@ -294,7 +301,7 @@ test('Cloud API rejects non-public targets, interactive preview and mutating ren
   const studio = createStudioServer(serverOptions(root, {
     cloudWorker: async () => { workerCalls++; return result; },
   }));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -378,7 +385,7 @@ test('Cloud worker symlinks cannot make the API read host files as reports or ar
       return result;
     },
   }));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     releaseReport();
     await new Promise(resolve => studio.server.close(resolve));
@@ -408,11 +415,12 @@ test('Cloud worker symlinks cannot make the API read host files as reports or ar
   assert.equal(running.status, 200);
   assert.equal(JSON.stringify(running.data).includes('host-only-sentinel'), false);
   releaseReport();
-  assert.equal((await waitForJob(origin, reportJob.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+  assert.equal((await waitForJob(origin, reportJob.data.jobId, tokenA, 'project-a')).data.status, 'failed',
+    'Cloud artifact protection must reject a worker-created symlink');
 
   const videoJob = await submit('video-symlink');
   assert.equal(videoJob.status, 202);
-  assert.equal((await waitForJob(origin, videoJob.data.jobId, tokenA, 'project-a')).data.status, 'completed');
+  assert.equal((await waitForJob(origin, videoJob.data.jobId, tokenA, 'project-a')).data.status, 'failed');
   const video = await call(origin, '/api/jobs/' + videoJob.data.jobId + '/video', {
     token: tokenA, projectId: 'project-a',
   });
@@ -480,7 +488,7 @@ test('Cloud credentials support staged rotation, individual revocation, principa
 test('Cloud token administration is in-process only, audited and secret-free', async t => {
   const root = await temp();
   const studio = createStudioServer(serverOptions(root));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -664,7 +672,7 @@ test('Cloud mode refuses to start without a stable audit signing secret', async 
 test('Cloud API audit chain verifies token and job events on the active store', async t => {
   const root = await temp();
   const studio = createStudioServer(serverOptions(root));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -691,7 +699,7 @@ test('Cloud API meters tenant jobs and enforces a durable monthly job budget', a
       return result;
     },
   }));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -735,7 +743,7 @@ test('Cloud API reserves tenant storage before admission and enforces output byt
       return result;
     },
   }));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -770,7 +778,7 @@ test('Cloud audit archive requires exact external acknowledgement and resumes fr
     return { throughSequence: last.sequence, throughHash: last.eventHash };
   };
   const studio = createStudioServer(serverOptions(root, { cloudAuditArchive: archiveSink }));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -799,7 +807,7 @@ test('Cloud audit archive refuses missing or mismatched external acknowledgement
   const studio = createStudioServer(serverOptions(root, {
     cloudAuditArchive: async () => ({ throughSequence: 999, throughHash: 'f'.repeat(64) }),
   }));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -861,7 +869,7 @@ test('Cloud server exposes key rotation only through trusted audit administratio
     cloudAuditKey: null,
     cloudAuditKeyRing: { activeKeyId: keyId, keys: { [keyId]: key } },
   }));
-  const origin = await listen(studio.server);
+  const origin = await listen(studio);
   t.after(async () => {
     await new Promise(resolve => studio.server.close(resolve));
     await rm(root, { recursive: true, force: true });
