@@ -359,3 +359,54 @@ export function createReplicaCertificateLifecycle({
     rotate: (context, replicaId, options) => provision(context, replicaId, { ...options, rotate: true }),
   });
 }
+
+
+/** Appends certificate lifecycle events to the existing signed platform audit chain. */
+export function createStudioCertificateAuditRecorder({ store } = {}) {
+  if (!store || typeof store.recordCloudAudit !== 'function') {
+    throw new TypeError('Studio cloud audit store is required');
+  }
+  const allowedActions = new Set([
+    'cloud.certificate.issue_started',
+    'cloud.certificate.rotation_started',
+    'cloud.certificate.activation_authorized',
+    'cloud.certificate.activated',
+    'cloud.certificate.revocation_pending',
+    'cloud.certificate.failed',
+  ]);
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return Object.freeze({
+    async record(event) {
+      if (!event || typeof event !== 'object' || Array.isArray(event) ||
+          Object.keys(event).some(key => ![
+            'action', 'actorId', 'replicaId', 'bundleId', 'previousBundleId',
+            'fingerprint256', 'resultCode',
+          ].includes(key)) ||
+          !allowedActions.has(event.action) ||
+          typeof event.actorId !== 'string' || !ACTOR_ID.test(event.actorId) ||
+          typeof event.replicaId !== 'string' || !REPLICA_ID.test(event.replicaId) ||
+          typeof event.bundleId !== 'string' || !uuidPattern.test(event.bundleId) ||
+          (event.previousBundleId !== undefined && event.previousBundleId !== null &&
+            (typeof event.previousBundleId !== 'string' || !uuidPattern.test(event.previousBundleId))) ||
+          (event.fingerprint256 !== undefined &&
+            (typeof event.fingerprint256 !== 'string' || !FINGERPRINT.test(event.fingerprint256))) ||
+          (event.resultCode !== undefined &&
+            (typeof event.resultCode !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(event.resultCode)))) {
+        throw new TypeError('Certificate audit event is invalid');
+      }
+      store.recordCloudAudit({
+        tenantId: 'platform',
+        principalId: event.actorId,
+        action: event.action,
+        resourceId: event.replicaId,
+        outcome: event.action === 'cloud.certificate.failed' ? 'failed' : 'success',
+        details: {
+          bundleId: event.bundleId,
+          ...(event.previousBundleId ? { previousBundleId: event.previousBundleId } : {}),
+          ...(event.fingerprint256 ? { fingerprint256: event.fingerprint256 } : {}),
+          ...(event.resultCode ? { resultCode: event.resultCode } : {}),
+        },
+      });
+    },
+  });
+}
