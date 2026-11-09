@@ -226,8 +226,8 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
       const result = await client.query(
         `UPDATE tutorial_credential_rollouts
             SET acknowledged = acknowledged || jsonb_build_object($4,
-                  jsonb_build_object('targetVersion', $5, 'tokenIds', $6::jsonb,
-                    'auditKeyRing', $7::jsonb, 'actorId', $8)),
+                  jsonb_build_object('targetVersion', $5::text, 'tokenIds', $6::jsonb,
+                    'auditKeyRing', $7::jsonb, 'actorId', $8::text)),
                 failures = failures - $4, failed_replica_ids = failed_replica_ids - $4,
                 updated_at = clock_timestamp()
           WHERE rollout_id = $1 AND lease_owner = $2::uuid AND fencing_token = $3::bigint
@@ -254,7 +254,7 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
       const result = await client.query(
         `UPDATE tutorial_credential_rollouts
             SET acknowledged = acknowledged - $4,
-                failures = failures || jsonb_build_object($4, $5),
+                failures = failures || jsonb_build_object($4, $5::text),
                 failed_replica_ids = (SELECT COALESCE(jsonb_agg(DISTINCT item ORDER BY item), '[]'::jsonb)
                   FROM jsonb_array_elements_text(failed_replica_ids || jsonb_build_array($4)) AS existing(item)),
                 updated_at = clock_timestamp()
