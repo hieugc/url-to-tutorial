@@ -42,6 +42,7 @@ function createHarness({ failVerify = false, failRevoke = false, invalidCertific
         extendedKeyUsages: ['serverAuth', 'clientAuth'],
         publicKeyFingerprint: input.expectedPublicKeyFingerprint,
         fingerprint256: sequence === 1 ? fingerprint : 'b'.repeat(64),
+        serialNumber: String(sequence).padStart(16, '0'),
         notBefore: new Date(now - 1000).toISOString(),
         notAfter: new Date(now + 30 * 24 * 60 * 60_000).toISOString(),
       };
@@ -151,7 +152,7 @@ test('preserves the active certificate and destroys the staged key when CA ident
   ), /certificate identity or policy validation failed/i);
   assert.equal(getActive(), null);
   assert.ok(calls.some(c => c.method === 'destroyKey'));
-  assert.equal([...records.values()][0].state, 'failed');
+  assert.equal(records.size, 0, 'unverified certificates must never be staged');
 });
 
 test('restores the previous certificate if the replica does not verify the staged fingerprint', async () => {
