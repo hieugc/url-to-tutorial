@@ -108,6 +108,7 @@ test('PostgreSQL rollout store persists acknowledgements, fences stale coordinat
     "UPDATE tutorial_credential_rollouts SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE rollout_id = $1",
     [crashedId],
   );
+  await assert.rejects(storeA.renewRollout({ rolloutId: crashedId, leaseToken: crashedLease.leaseToken }), /lease|fencing|ownership/i);
   const recoveredLease = await storeB.resumeRollout({ rolloutId: crashedId, actorId: 'security-operator' });
   assert.notEqual(recoveredLease.leaseToken, crashedLease.leaseToken);
   await assert.rejects(storeA.recordReplicaFailure({
