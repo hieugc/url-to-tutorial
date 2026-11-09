@@ -119,6 +119,7 @@ export function createReplicaCertificateLifecycle({
       let replica;
       let installed = false;
       let activated = false;
+      let activationAttempted = false;
       try {
         await auditRecorder.record({
           action: rotate ? 'cloud.certificate.rotation_started' : 'cloud.certificate.issue_started',
@@ -230,7 +231,8 @@ export function createReplicaCertificateLifecycle({
           bundleId,
           previousBundleId: previous?.bundleId ?? null,
         });
-        const active = await certificateStore.activateCertificate({
+        activationAttempted = true;
+        await certificateStore.activateCertificate({
           replicaId,
           bundleId,
           expectedPreviousBundleId: previous?.bundleId ?? null,
@@ -287,10 +289,9 @@ export function createReplicaCertificateLifecycle({
           previousCertificateRevocationPending,
           previousKeyCleanupPending,
           keyRef: keyMaterial.keyRef,
-          activeRecord: active,
         });
       } catch (error) {
-        if (activated) {
+        if (activated || activationAttempted) {
           throw new Error('Certificate activation completed but a follow-up control failed; manual review is required');
         }
         if (installed && replica) {
@@ -322,6 +323,12 @@ export function createReplicaCertificateLifecycle({
           });
         } catch {
           throw new Error('Certificate failure audit could not be recorded; manual review is required');
+        }
+        if (error?.code === 'CERTIFICATE_POLICY_REJECTED') {
+          throw new Error('Issued certificate identity or policy validation failed; no new certificate was activated');
+        }
+        if (error?.code === 'REPLICA_CERTIFICATE_VERIFY_FAILED') {
+          throw new Error('Replica certificate verification failed; previous certificate remains active');
         }
         throw new Error(rotate
           ? 'Certificate rotation failed; previous certificate remains active'
