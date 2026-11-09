@@ -320,8 +320,36 @@ export async function runCloudCredentialRollout({
 
   const acknowledged = new Set(record.acknowledgedReplicaIds);
   const failures = [];
-  const completed = await mapLimit(replicas, concurrency, async replica => {
+  let leaseLost = false;
+  let renewalInFlight = Promise.resolve();
+  let renewalTimer;
+  const assertLeaseAvailable = () => {
+    if (leaseLost) {
+      throw Object.assign(new Error('Credential rollout lease was lost'), {
+        code: 'ROLLOUT_LEASE_LOST',
+      });
+    }
+  };
+  if (typeof rolloutStore.renewRollout === 'function') {
+    const renewIntervalMs = Number.isSafeInteger(rolloutStore.renewIntervalMs)
+      ? rolloutStore.renewIntervalMs : 30_000;
+    renewalTimer = setInterval(() => {
+      renewalInFlight = rolloutStore.renewRollout({
+        rolloutId: id,
+        leaseToken,
+      }).then(result => {
+        if (!result || result.renewed !== true) leaseLost = true;
+      }).catch(() => {
+        leaseLost = true;
+      });
+    }, renewIntervalMs);
+    renewalTimer.unref?.();
+  }
+  let completed;
+  try {
+    completed = await mapLimit(replicas, concurrency, async replica => {
     try {
+      assertLeaseAvailable();
       if (acknowledged.has(replica.id)) {
         let current;
         try { current = await replica.status(); } catch { current = null; }
@@ -330,6 +358,7 @@ export async function runCloudCredentialRollout({
         }
       }
 
+      assertLeaseAvailable();
       let assertion;
       try {
         assertion = await operatorAuthenticator.createReplicaAssertion(identity, {
@@ -346,6 +375,7 @@ export async function runCloudCredentialRollout({
         throw Object.assign(new Error('invalid assertion'), { code: 'ASSERTION_INVALID' });
       }
 
+      assertLeaseAvailable();
       await replica.reloadTokens(assertion, {
         expectedVersion: snapshot.version,
         rolloutId: id,
@@ -358,6 +388,7 @@ export async function runCloudCredentialRollout({
         });
       }
 
+      assertLeaseAvailable();
       try {
         await rolloutStore.recordReplicaAck({
           rolloutId: id,
@@ -375,6 +406,7 @@ export async function runCloudCredentialRollout({
       }
       return { replicaId: replica.id, acknowledged: true, reused: false };
     } catch (error) {
+      if (leaseLost) throw new Error('Credential rollout lease was lost; refusing further replica operations');
       const errorCode = safeErrorCode(error);
       try {
         await rolloutStore.recordReplicaFailure({
@@ -391,7 +423,15 @@ export async function runCloudCredentialRollout({
       failures.push({ replicaId: replica.id, errorCode });
       return { replicaId: replica.id, acknowledged: false, errorCode };
     }
-  });
+    });
+  } catch (error) {
+    if (renewalTimer) clearInterval(renewalTimer);
+    await renewalInFlight;
+    throw error;
+  }
+  if (renewalTimer) clearInterval(renewalTimer);
+  await renewalInFlight;
+  assertLeaseAvailable();
 
   const failedReplicaIds = [...new Set(failures.map(item => item.replicaId))].sort();
   const acknowledgedReplicaIds = completed
