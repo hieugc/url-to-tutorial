@@ -20,6 +20,7 @@ export class StudioJobStore {
       throw new TypeError('Cloud artifact cipher must support buffer encryption and decryption');
     }
     this.artifactCipher = artifactCipher;
+    this.legacyPlaintextRows = false;
     this.auditKeys = new Map();
     this.activeAuditKeyId = null;
     if (auditKeyRing !== null) {
@@ -227,6 +228,7 @@ export class StudioJobStore {
       }
       // Existing cloud installations can migrate legacy plaintext rows during
       // the pre-listen artifact-protection step. Local-only stores stay plaintext.
+      if (this.artifactCipher) this.legacyPlaintextRows = true;
       return value;
     }
     if (!this.artifactCipher || typeof value.id !== 'string' ||
@@ -768,6 +770,17 @@ export class StudioJobStore {
     const excess = jobs.filter(terminal).slice(0, Math.max(0, jobs.length - MAX_STORED_JOBS));
     for (const { id } of excess) this.delete(id);
     return excess.map(({ id }) => id);
+  }
+
+  compactEncryptedRecords() {
+    if (!this.artifactCipher || !this.legacyPlaintextRows) return false;
+    // WAL checkpoint + VACUUM removes superseded plaintext JSON pages left by
+    // pre-encryption versions; otherwise old values could survive in free pages.
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    this.db.exec('VACUUM');
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    this.legacyPlaintextRows = false;
+    return true;
   }
 
   close() { this.db.close(); }
