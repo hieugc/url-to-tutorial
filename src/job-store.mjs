@@ -21,6 +21,7 @@ export class StudioJobStore {
     }
     this.artifactCipher = artifactCipher;
     this.legacyPlaintextRows = false;
+    this.needsEncryptedStorageCompaction = false;
     this.auditKeys = new Map();
     this.activeAuditKeyId = null;
     if (auditKeyRing !== null) {
@@ -64,6 +65,12 @@ export class StudioJobStore {
     mkdirSync(root, { recursive: true });
     this.db = new DatabaseSync(path.join(root, 'studio-jobs.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL;');
+    if (this.artifactCipher) {
+      this.db.exec('CREATE TABLE IF NOT EXISTS cloud_storage_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+      const state = this.db.prepare('SELECT value FROM cloud_storage_metadata WHERE key=?')
+        .get('job-record-encryption-v1');
+      this.needsEncryptedStorageCompaction = !state;
+    }
     this.db.exec('CREATE TABLE IF NOT EXISTS studio_jobs (' +
       'id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL)');
     this.db.exec('CREATE TABLE IF NOT EXISTS cloud_job_submissions (' +
@@ -773,13 +780,18 @@ export class StudioJobStore {
   }
 
   compactEncryptedRecords() {
-    if (!this.artifactCipher || !this.legacyPlaintextRows) return false;
+    if (!this.artifactCipher ||
+        (!this.legacyPlaintextRows && !this.needsEncryptedStorageCompaction)) return false;
     // WAL checkpoint + VACUUM removes superseded plaintext JSON pages left by
     // pre-encryption versions; otherwise old values could survive in free pages.
     this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     this.db.exec('VACUUM');
     this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    this.db.prepare('INSERT INTO cloud_storage_metadata (key, value) VALUES (?, ?) ' +
+      'ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+      .run('job-record-encryption-v1', 'complete');
     this.legacyPlaintextRows = false;
+    this.needsEncryptedStorageCompaction = false;
     return true;
   }
 
