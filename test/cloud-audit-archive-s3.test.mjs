@@ -37,12 +37,13 @@ class FakeS3 {
 
 const emptyHash = '0'.repeat(64);
 function batch({ previousSequence = 0, previousHash = emptyHash, sequences = [1, 2] } = {}) {
-  const events = sequences.map((sequence, index) => ({
-    sequence,
-    previousHash: index === 0 ? previousHash : 'a'.repeat(64),
-    eventHash: (sequence.toString(16).padStart(64, '0')),
-    action: 'job.completed',
-  }));
+  let previousEventHash = previousHash;
+  const events = sequences.map(sequence => {
+    const eventHash = sequence.toString(16).padStart(64, '0');
+    const event = { sequence, previousHash: previousEventHash, eventHash, action: 'job.completed' };
+    previousEventHash = eventHash;
+    return event;
+  });
   return {
     previousSequence,
     previousHash,
