@@ -90,6 +90,30 @@ const publisher = await createDefaultAwsSecretsManagerPublisher({
 
 This is the shared publish-lock adapter only. It does not implement the durable rollout store, certificate issuance/rotation, break-glass recovery, vendor archive sink, or production deployment. Keep Cloud API disabled until all release gates are met and independently reviewed.
 
+### PostgreSQL durable multi-replica rollout store
+
+`src/cloud-rollout-postgres.mjs` implements the `cloud-rollout.mjs` store contract with transactional PostgreSQL state. It persists the rollout ID, immutable secret revision, secret-free snapshot digest, fixed replica inventory, safe acknowledgement metadata, sanitized failure codes, and completion state. It does not persist bearer-token values, audit-key bytes, MFA assertions, private keys, or certificates.
+
+Apply `migrations/002-cloud-rollouts.sql` to the same trusted PostgreSQL service used by the control plane. The store serializes rollout admission, permits only one active/partial rollout, rejects revision rollback, and issues monotonically increasing fencing tokens. A crashed `in_progress` rollout can be resumed only after its lease expires; a partial rollout can be resumed with a new fencing token. Every acknowledgement/failure/finalization checks lease owner, fencing token, target revision and replica membership. The adapter renews its lease; `runCloudCredentialRollout` renews during long-running replica operations and stops if renewal fails.
+
+```js
+import pg from 'pg';
+import { createPostgresRolloutStore } from '../src/cloud-rollout-postgres.mjs';
+import { runCloudCredentialRollout } from '../src/cloud-rollout.mjs';
+
+const pool = new pg.Pool({ connectionString: process.env.COORDINATION_DATABASE_URL });
+const rolloutStore = createPostgresRolloutStore({ pool });
+const result = await runCloudCredentialRollout({
+  secretManager,
+  operatorAuthenticator,
+  replicaDirectory,
+  rolloutStore,
+  context: operatorSession,
+});
+```
+
+Use a dedicated database role with access only to the coordination tables. Keep database backups encrypted and access-controlled. This adapter is durable coordination code, not a deployed PostgreSQL service, certificate authority, break-glass approval workflow, or production rollout. Do not expose Cloud API until all infrastructure, audit, retention and independent security gates pass.
+
 - Use separate least-privilege roles: API runtime needs `secretsmanager:GetSecretValue` (and `kms:Decrypt` only when required by a customer-managed key); the publisher role additionally needs `secretsmanager:PutSecretValue` and only the required KMS encrypt/data-key permissions. Configure CloudTrail retention, alerting and IAM review in the AWS account; the adapter does not configure those controls.
 - `src/cloud-rollout.mjs` adds a host-side multi-replica rollout coordinator. It reads one immutable secret revision, computes a secret-free SHA-256 snapshot digest, fixes the replica inventory for that rollout, and asks each replica to reload that exact revision through its own secret-manager adapter. The coordinator never sends raw tokens or signing keys to replica RPC clients.
 - The operator authenticator must implement `createReplicaAssertion(identity, claims)` and return a short-lived signed assertion scoped to `action`, `rolloutId`, `targetVersion`, `replicaId` and `expiresAt`. Each replica must independently validate that assertion, require its own configured replica ID to equal the assertion audience, and match the `rolloutId` and `expectedVersion` request constraints before applying a reload. The internal replica transport must use mutually authenticated TLS; do not expose this RPC to tenants or the public internet.
