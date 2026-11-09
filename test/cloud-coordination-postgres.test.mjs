@@ -24,6 +24,7 @@ class FakePostgresPool {
     }
 
     if (sql.includes('UPDATE tutorial_publish_locks')) {
+      if (this.failRenewals) return { rows: [] };
       const [resource, ownerId, fencingToken, leaseMs] = values;
       const row = this.rows.get(resource);
       if (!row || row.ownerId !== ownerId ||
@@ -91,8 +92,9 @@ test('Postgres publish lock serializes concurrent writers for the same resource'
 
 test('expired publish lock can be reclaimed and stale fencing tokens are rejected', async () => {
   const pool = new FakePostgresPool();
+  pool.failRenewals = true;
   const firstLock = createPostgresPublishLock({
-    pool, leaseMs: 25, renewIntervalMs: 1000, retryIntervalMs: 2,
+    pool, leaseMs: 100, renewIntervalMs: 20, retryIntervalMs: 2,
   });
   const secondLock = createPostgresPublishLock({
     pool, leaseMs: 1000, renewIntervalMs: 100, retryIntervalMs: 2,
@@ -104,7 +106,7 @@ test('expired publish lock can be reclaimed and stale fencing tokens are rejecte
     staleLease = lease;
     await gate.promise;
   });
-  await new Promise(resolve => setTimeout(resolve, 35));
+  await new Promise(resolve => setTimeout(resolve, 125));
   await secondLock.withLock('runtime', async lease => {
     await lease.assertHeld();
   });
@@ -116,10 +118,10 @@ test('expired publish lock can be reclaimed and stale fencing tokens are rejecte
 test('publish lock renews a lease while its callback is still running', async () => {
   const pool = new FakePostgresPool();
   const lock = createPostgresPublishLock({
-    pool, leaseMs: 40, renewIntervalMs: 10, retryIntervalMs: 2,
+    pool, leaseMs: 100, renewIntervalMs: 20, retryIntervalMs: 2,
   });
   await lock.withLock('runtime', async lease => {
-    await new Promise(resolve => setTimeout(resolve, 65));
+    await new Promise(resolve => setTimeout(resolve, 160));
     await lease.assertHeld();
   });
   assert.equal(pool.rows.size, 0);
@@ -138,5 +140,5 @@ test('publish lock validates resource and lease configuration', async () => {
   const pool = new FakePostgresPool();
   assert.throws(() => createPostgresPublishLock({ pool: {} }), /query-capable PostgreSQL pool/);
   const lock = createPostgresPublishLock({ pool });
-  assert.rejects(lock.withLock('', async () => {}), /resource/);
+  await assert.rejects(lock.withLock('', async () => {}), /resource/);
 });
