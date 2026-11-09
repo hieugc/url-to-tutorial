@@ -2,7 +2,7 @@ import test from 'node:test';
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCloudAuth } from '../src/cloud-auth.mjs';
@@ -883,4 +883,68 @@ test('Cloud server exposes key rotation only through trusted audit administratio
   assert.equal(studio.store.verifyCloudAuditChain().valid, true);
   assert.equal(studio.auditAdmin.keyMetadata().activeKeyId, rotatedId);
   assert.equal((await call(origin, '/api/health')).status, 200);
+});
+
+
+test('Cloud artifacts and persisted job records are encrypted at rest and decrypted only for scoped downloads', async t => {
+  const root = await temp();
+  const plaintextVideo = Buffer.from('private-video-payload-that-must-not-remain-on-disk');
+  const privateTitle = 'tenant-confidential-render-title';
+  const studio = createStudioServer(serverOptions(root, {
+    cloudWorker: async job => {
+      await writeFile(path.join(job.outputDir, 'tutorial.mp4'), plaintextVideo);
+      await writeFile(path.join(job.outputDir, 'report.json'), JSON.stringify({
+        title: privateTitle, status: 'completed',
+      }));
+      return {
+        report: { title: privateTitle, status: 'completed' },
+        video: { path: path.join(job.outputDir, 'tutorial.mp4'), codec: 'h264', duration: 1 },
+      };
+    },
+  }));
+  const origin = await listen(studio);
+  t.after(async () => {
+    await new Promise(resolve => studio.server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const submitted = await call(origin, '/api/render', {
+    method: 'POST', token: tokenA, projectId: 'project-a',
+    body: {
+      plan: {
+        schemaVersion: 1, title: privateTitle, url: 'https://example.com', language: 'en',
+        steps: [
+          { id: 'heading', title: 'Heading', description: 'Observe',
+            target: { css: 'h1' }, action: 'highlight', holdMs: 500 },
+          { id: 'stop', title: 'Stop', description: 'End', action: 'stop', holdMs: 500 },
+        ],
+      },
+    },
+  });
+  assert.equal(submitted.status, 202);
+  const completed = await waitForJob(origin, submitted.data.jobId, tokenA, 'project-a');
+  assert.equal(completed.data.status, 'completed');
+
+  const diskVideo = await readFile(path.join(root, submitted.data.jobId, 'tutorial.mp4'));
+  assert.notDeepEqual(diskVideo, plaintextVideo);
+  assert.equal(diskVideo.includes(plaintextVideo), false);
+
+  const storedJob = JSON.parse(studio.store.db.prepare(
+    'SELECT json FROM studio_jobs WHERE id=?',
+  ).get(submitted.data.jobId).json);
+  assert.equal(storedJob.storageFormat, 'utv-cloud-job-record-v1');
+  assert.equal(JSON.stringify(storedJob).includes(privateTitle), false);
+  assert.equal(JSON.stringify(storedJob).includes('private-video-payload'), false);
+
+  const downloaded = await call(origin, '/api/jobs/' + submitted.data.jobId + '/video', {
+    token: tokenA, projectId: 'project-a',
+  });
+  assert.equal(downloaded.status, 200);
+  assert.equal(downloaded.data, plaintextVideo.toString('utf8'));
+  assert.equal(downloaded.headers['content-length'], String(plaintextVideo.length));
+
+  const crossTenant = await call(origin, '/api/jobs/' + submitted.data.jobId + '/video', {
+    token: tokenB, projectId: 'project-b',
+  });
+  assert.equal(crossTenant.status, 404);
 });
