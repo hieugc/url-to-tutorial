@@ -152,6 +152,37 @@ await breakGlass.execute(approverSession, request.requestId);
 
 This is the dual-control workflow and persistence adapter, not a deployed incident-response service. Independent operator identity proofing, on-call procedures, recovery drills, audit archive retention and production security acceptance remain required.
 
+### Replica certificate issuance and rotation lifecycle
+
+`src/cloud-certificate-lifecycle.mjs` provides the staged issue/rotate workflow; `src/cloud-certificate-postgres.mjs` persists public certificate material and lifecycle metadata through migration `004-cloud-certificates.sql`. The workflow is serialized per replica using the shared PostgreSQL publish lock.
+
+The key-provider contract must create a non-exportable ECDSA P-256 key and CSR and return only an opaque `keyRef`, CSR and public-key fingerprint. The private key must remain in a KMS/HSM-backed provider and is never returned to the lifecycle manager or stored in PostgreSQL. The private-CA adapter issues the leaf certificate and must cryptographically validate the certificate chain, exact replica DNS SAN, CSR public-key binding and both client/server EKUs before returning verified metadata. The manager independently checks the returned identity, validity window, serial and fingerprint fields.
+
+Rotation is overlap-safe: stage the new bundle, install it on the replica, verify the observed fingerprint, append an activation authorization event, activate the replica and durable store, then revoke the previous CA serial. If installation or verification fails, restore the previous replica bundle, mark the new staged record failed, revoke the unused CA issuance and destroy its key reference. If old-certificate revocation fails after activation, the new certificate remains active and the old record is marked `revocation_pending` for operator follow-up.
+
+The module is provider-neutral. A concrete AWS Private CA/KMS or Vault PKI/HSM adapter and the production replica hot-reload adapter must be supplied by the deployment. Do not treat the lifecycle manager alone as a functioning CA or a completed live mTLS rotation drill. Use `createStudioCertificateAuditRecorder({ store })` to append lifecycle events to the signed platform audit chain.
+
+```js
+import { createPostgresCertificateStore } from '../src/cloud-certificate-postgres.mjs';
+import {
+  createReplicaCertificateLifecycle,
+  createStudioCertificateAuditRecorder,
+} from '../src/cloud-certificate-lifecycle.mjs';
+
+const lifecycle = createReplicaCertificateLifecycle({
+  operatorAuthenticator,
+  keyProvider, // non-exportable KMS/HSM key + CSR provider
+  certificateAuthority, // private CA issue + cryptographic chain verifier
+  certificateStore: createPostgresCertificateStore({ pool }),
+  replicaDirectory, // hot install, fingerprint verify, activate and restore
+  publishLock, // shared PostgreSQL lock
+  auditRecorder: createStudioCertificateAuditRecorder({ store }),
+});
+await lifecycle.rotate(operatorSession, 'api-a');
+```
+
+The code does not provision the CA, KMS/HSM, trust distribution, certificate revocation checker or live replica endpoints. A live mTLS handshake/rollback drill and independent security review remain release gates.
+
 - Use separate least-privilege roles: API runtime needs `secretsmanager:GetSecretValue` (and `kms:Decrypt` only when required by a customer-managed key); the publisher role additionally needs `secretsmanager:PutSecretValue` and only the required KMS encrypt/data-key permissions. Configure CloudTrail retention, alerting and IAM review in the AWS account; the adapter does not configure those controls.
 - `src/cloud-rollout.mjs` adds a host-side multi-replica rollout coordinator. It reads one immutable secret revision, computes a secret-free SHA-256 snapshot digest, fixes the replica inventory for that rollout, and asks each replica to reload that exact revision through its own secret-manager adapter. The coordinator never sends raw tokens or signing keys to replica RPC clients.
 - The operator authenticator must implement `createReplicaAssertion(identity, claims)` and return a short-lived signed assertion scoped to `action`, `rolloutId`, `targetVersion`, `replicaId` and `expiresAt`. Each replica must independently validate that assertion, require its own configured replica ID to equal the assertion audience, and match the `rolloutId` and `expectedVersion` request constraints before applying a reload. The internal replica transport must use mutually authenticated TLS; do not expose this RPC to tenants or the public internet.

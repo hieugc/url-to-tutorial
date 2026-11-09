@@ -67,7 +67,7 @@ jobs:
       - run: npm ci
       - run: npm install --no-save --package-lock=false pg@8.16.3
       - name: Verify distributed publish-lock semantics against PostgreSQL
-        run: node --test test/cloud-coordination-postgres.integration.test.mjs test/cloud-rollout-postgres.integration.test.mjs test/cloud-break-glass-postgres.integration.test.mjs
+        run: node --test test/cloud-coordination-postgres.integration.test.mjs test/cloud-rollout-postgres.integration.test.mjs test/cloud-break-glass-postgres.integration.test.mjs test/cloud-certificate-postgres.integration.test.mjs
         env:
           COORDINATION_DATABASE_URL: postgres://postgres:tutorial-test@localhost:5432/tutorial_test
 
