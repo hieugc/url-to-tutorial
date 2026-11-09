@@ -134,8 +134,18 @@ export function createS3AuditArchiveSink({
         const history = JSON.parse(historyObject.body);
         if (history.schemaVersion !== 1 || history.replicaId !== replicaId ||
             history.throughSequence !== checkpoint.throughSequence ||
-            history.throughHash !== checkpoint.throughHash) {
+            history.throughHash !== checkpoint.throughHash ||
+            typeof history.batchKey !== 'string' ||
+            !history.batchKey.startsWith(root + '/batches/')) {
           throw new Error('mismatch');
+        }
+        const archivedBatch = await readObject(history.batchKey);
+        if (!archivedBatch) throw new Error('batch missing');
+        const archivedPayload = JSON.parse(archivedBatch.body);
+        if (archivedPayload.schemaVersion !== 1 || archivedPayload.replicaId !== replicaId ||
+            archivedPayload.throughSequence !== checkpoint.throughSequence ||
+            archivedPayload.throughHash !== checkpoint.throughHash) {
+          throw new Error('batch checkpoint mismatch');
         }
       } catch {
         throw new Error('S3 audit archive checkpoint history is invalid');
