@@ -12,6 +12,8 @@ const tokenA = 'bootstrap-tenant-a-token-0123456789abcdef';
 const tokenB = 'bootstrap-tenant-a-token-rotated-0123456789';
 const auditKey = 'bootstrap-audit-signing-key-material-0123456789';
 const auditKeyId = createHash('sha256').update(auditKey).digest('hex').slice(0, 16);
+const artifactKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const artifactKeyId = createHash('sha256').update(Buffer.from(artifactKey, 'hex')).digest('hex').slice(0, 16);
 
 function snapshot(version, token = tokenA, ring = {
   activeKeyId: auditKeyId,
@@ -27,6 +29,7 @@ function snapshot(version, token = tokenA, ring = {
       projectIds: ['project-a'],
     }],
     auditKeyRing: ring,
+    artifactKeyRing: { activeKeyId: artifactKeyId, keys: { [artifactKeyId]: artifactKey } },
   };
 }
 
@@ -37,6 +40,7 @@ function fakeFactory(calls = []) {
     const auditEvents = [];
     return {
       server: { close() {} },
+      protectCloudArtifacts: async () => ({ jobs: 0, files: 0, encryptedBytes: 0 }),
       tokenAdmin: {
         list: () => activeTokens.map(token => ({ ...token, projectIds: [...token.projectIds] })),
         replace: (tokens, { actorId } = {}) => {
@@ -88,6 +92,7 @@ test('Cloud bootstrap reads versioned secrets and forces cloud credentials into 
     tokenCount: 1,
     tokenIds: ['service-a-current'],
     auditKeyRing: { activeKeyId: auditKeyId, keyIds: [auditKeyId] },
+    artifactKeyRing: { activeKeyId: artifactKeyId, keyIds: [artifactKeyId] },
   });
   const visible = JSON.stringify(bootstrap.status());
   assert.equal(visible.includes(tokenA), false);
@@ -392,6 +397,7 @@ test('Cloud bootstrap reconciles Docker networks after persisted jobs are recove
   };
   const studio = {
     server: { close() {} },
+    protectCloudArtifacts: async () => ({ jobs: 0, files: 0, encryptedBytes: 0 }),
     jobs: new Map([
       [activeId, { id: activeId, status: 'running' }],
       [interruptedId, { id: interruptedId, status: 'interrupted' }],
@@ -422,6 +428,7 @@ test('Cloud bootstrap fails closed when Docker network reconciliation reports a 
   });
   const studio = {
     server: { close() {} },
+    protectCloudArtifacts: async () => ({ jobs: 0, files: 0, encryptedBytes: 0 }),
     jobs: new Map(),
     store: { close() { closed = true; } },
     tokenAdmin: { list: () => [{ tokenId: 'service-a-current' }] },
