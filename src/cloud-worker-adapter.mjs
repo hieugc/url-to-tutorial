@@ -75,6 +75,128 @@ export async function directoryBytes(root) {
   return total;
 }
 
+
+const JOB_NETWORK = /^utv-job-([a-f0-9-]{36})$/i;
+const SAFE_CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
+
+/**
+ * Reconcile per-job Docker networks left behind by an API/daemon crash.
+ *
+ * Call during trusted host startup, after persisted jobs have been recovered
+ * and before accepting new cloud jobs. Only an owned, internal bridge network
+ * with no attached container other than the configured egress proxy is eligible.
+ * A network with any worker/unknown endpoint is deliberately retained.
+ */
+export async function reconcileOrphanedCloudNetworks({
+  dockerBin = 'docker',
+  proxyContainer = 'url-tutorial-egress-proxy',
+  activeJobIds,
+  runDockerImpl = runDocker,
+} = {}) {
+  if (!SAFE_CONTAINER_NAME.test(proxyContainer)) {
+    throw new TypeError('A valid egress proxy container name is required');
+  }
+  if (!Array.isArray(activeJobIds) ||
+      activeJobIds.some(id => typeof id !== 'string' || !UUID.test(id))) {
+    throw new TypeError('active job IDs must be UUIDs');
+  }
+  if (typeof runDockerImpl !== 'function') {
+    throw new TypeError('runDockerImpl must be a function');
+  }
+  const active = new Set(activeJobIds.map(id => id.toLowerCase()));
+  const listed = await runDockerImpl(dockerBin, [
+    'network', 'ls',
+    '--filter', 'label=app=url-to-tutorial',
+    '--filter', 'label=tutorial.job-id',
+    '--format', '{{.Name}}',
+  ], { timeoutMs: 15000, maxOutputBytes: 64 * 1024 });
+  const names = String(listed?.stdout ?? '').split(/\r?\n/).filter(Boolean);
+  if (names.length > 1000) {
+    throw new Error('Docker returned too many candidate job networks; refusing startup reconciliation');
+  }
+
+  const result = { scanned: names.length, removed: [], skipped: [], failed: [] };
+  async function inspect(name) {
+    const response = await runDockerImpl(dockerBin, ['network', 'inspect', name], {
+      timeoutMs: 10000, maxOutputBytes: 64 * 1024,
+    });
+    let parsed;
+    try { parsed = JSON.parse(response.stdout); } catch {
+      throw new Error('invalid-inspect-response');
+    }
+    if (!Array.isArray(parsed) || parsed.length !== 1 ||
+        !parsed[0] || typeof parsed[0] !== 'object') {
+      throw new Error('invalid-inspect-response');
+    }
+    return parsed[0];
+  }
+
+  for (const name of names) {
+    const match = JOB_NETWORK.exec(name);
+    if (!match) {
+      result.skipped.push({ network: name.slice(0, 128), reason: 'unexpected-network-name' });
+      continue;
+    }
+    const jobId = match[1].toLowerCase();
+    if (active.has(jobId)) {
+      result.skipped.push({ network: name, reason: 'job-active' });
+      continue;
+    }
+
+    try {
+      const details = await inspect(name);
+      if (details.Name !== name || details.Driver !== 'bridge' || details.Internal !== true ||
+          details.Labels?.app !== 'url-to-tutorial' ||
+          details.Labels?.['tutorial.job-id']?.toLowerCase() !== jobId ||
+          !details.Containers || typeof details.Containers !== 'object' ||
+          Array.isArray(details.Containers)) {
+        result.skipped.push({ network: name, reason: 'network-not-owned-or-not-internal' });
+        continue;
+      }
+
+      const endpoints = Object.values(details.Containers);
+      if (endpoints.some(endpoint =>
+        !endpoint || endpoint.Name !== proxyContainer)) {
+        result.skipped.push({ network: name, reason: 'non-proxy-container-attached' });
+        continue;
+      }
+
+      if (endpoints.length) {
+        await runDockerImpl(dockerBin, [
+          'network', 'disconnect', '--force', name, proxyContainer,
+        ], { timeoutMs: 10000, maxOutputBytes: 64 * 1024 });
+      }
+
+      // Re-inspect after detaching the proxy. Never remove a network if a
+      // worker/unknown endpoint appeared while reconciliation was running.
+      const afterDisconnect = await inspect(name);
+      if (afterDisconnect.Name !== name || afterDisconnect.Driver !== 'bridge' ||
+          afterDisconnect.Internal !== true ||
+          afterDisconnect.Labels?.app !== 'url-to-tutorial' ||
+          afterDisconnect.Labels?.['tutorial.job-id']?.toLowerCase() !== jobId ||
+          !afterDisconnect.Containers ||
+          Object.keys(afterDisconnect.Containers).length !== 0) {
+        result.skipped.push({ network: name, reason: 'network-changed-during-reconciliation' });
+        continue;
+      }
+
+      await runDockerImpl(dockerBin, ['network', 'rm', name], {
+        timeoutMs: 10000, maxOutputBytes: 64 * 1024,
+      });
+      result.removed.push(name);
+    } catch {
+      result.failed.push({ network: name, reason: 'docker-reconciliation-failed' });
+    }
+  }
+
+  return Object.freeze({
+    scanned: result.scanned,
+    removed: Object.freeze(result.removed),
+    skipped: Object.freeze(result.skipped),
+    failed: Object.freeze(result.failed),
+  });
+}
+
 export function buildDockerWorkerRunArgs({
   jobId, containerName, networkName, image, outputDir, uid, gid,
   memoryLimit = '2g', cpuLimit = '2', pidsLimit = 128, timeoutMs = 600000,
@@ -142,6 +264,7 @@ export function createDockerWorkerAdapter({
   timeoutMs = 600000,
   maxOutputBytes = 1024 * 1024 * 1024,
   outputCheckIntervalMs = 1000,
+  runDockerImpl = runDocker,
 } = {}) {
   validateImage(image);
   if (typeof process.getuid !== 'function' || typeof process.getgid !== 'function' ||
@@ -159,6 +282,7 @@ export function createDockerWorkerAdapter({
       outputCheckIntervalMs > 10000) {
     throw new TypeError('Invalid cloud worker output size monitor limits');
   }
+  if (typeof runDockerImpl !== 'function') throw new TypeError('runDockerImpl must be a function');
   const rootPath = path.resolve(allowedOutputRoot);
 
   async function safeDocker(args) {
@@ -176,7 +300,7 @@ export function createDockerWorkerAdapter({
     }
   }
 
-  return async function runIsolatedCloudJob(job) {
+  const runIsolatedCloudJob = async function runIsolatedCloudJob(job) {
     if (!job || !UUID.test(job.jobId || '') ||
         !/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/.test(job.tenantId || '') ||
         !/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/.test(job.projectId || '') ||
@@ -322,4 +446,9 @@ export function createDockerWorkerAdapter({
       }
     }
   };
+  runIsolatedCloudJob.reconcileOrphanedNetworks = ({ activeJobIds } = {}) =>
+    reconcileOrphanedCloudNetworks({
+      dockerBin, proxyContainer, activeJobIds, runDockerImpl,
+    });
+  return runIsolatedCloudJob;
 }

@@ -128,3 +128,32 @@ test('Worker output byte accounting does not follow symlinks outside the job dir
   assert.ok(bytes < 4096, 'symlink target bytes must never be counted or followed');
   assert.ok(bytes >= 128, 'regular worker output files must be counted');
 });
+
+test('Docker worker adapter exposes startup reconciliation using the same daemon and proxy identity', async t => {
+  if (typeof process.getuid !== 'function' || process.getuid() === 0) {
+    t.skip('Requires a non-root host process to match production worker ownership');
+    return;
+  }
+  const root = await mkdtemp(path.join(tmpdir(), 'tutorial-docker-recovery-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const calls = [];
+  const runDockerImpl = async (_bin, args) => {
+    calls.push(args);
+    return { stdout: '', stderr: '' };
+  };
+  const adapter = createDockerWorkerAdapter({
+    dockerBin: 'docker-fixture',
+    image,
+    allowedOutputRoot: root,
+    proxyContainer: 'proxy-fixture',
+    runDockerImpl,
+  });
+  const result = await adapter.reconcileOrphanedNetworks({ activeJobIds: [] });
+  assert.deepEqual(result, {
+    scanned: 0, removed: [], skipped: [], failed: [],
+  });
+  assert.deepEqual(calls, [[
+    'network', 'ls', '--filter', 'label=app=url-to-tutorial',
+    '--filter', 'label=tutorial.job-id', '--format', '{{.Name}}',
+  ]]);
+});

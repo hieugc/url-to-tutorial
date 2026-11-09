@@ -136,6 +136,29 @@ export async function createCloudStudioFromSecretManager({
     throw new Error('Cloud server audit key ring does not match the secret manager snapshot');
   }
 
+  // Docker-backed workers expose this hook. Run it only after Studio has
+  // recovered persisted jobs, and before the caller can listen for requests.
+  // A failed reconciliation must fail closed rather than accept work with
+  // potentially leaked per-job network state.
+  const reconcileNetworks = serverOptions.cloudWorker?.reconcileOrphanedNetworks;
+  if (typeof reconcileNetworks === 'function') {
+    try {
+      if (!(studio.jobs instanceof Map)) {
+        throw new Error('Cloud Studio did not expose its recovered job inventory');
+      }
+      const activeJobIds = [...studio.jobs.values()]
+        .filter(job => ['queued', 'running'].includes(job?.status))
+        .map(job => job.id);
+      const recovery = await reconcileNetworks({ activeJobIds });
+      if (!recovery || !Array.isArray(recovery.failed) || recovery.failed.length > 0) {
+        throw new Error('Docker network reconciliation was incomplete');
+      }
+    } catch {
+      studio.store?.close?.();
+      throw new Error('Cloud Docker network recovery failed; refusing to start the Cloud API');
+    }
+  }
+
   let secretVersion = snapshot.version;
   let tokenDigest = initialTokenDigest;
   const keyRingDigest = initialAuditKeyRing.keyMaterialDigest;

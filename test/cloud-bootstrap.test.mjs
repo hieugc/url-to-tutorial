@@ -356,3 +356,61 @@ test('Cloud bootstrap fails closed when the secret manager is missing or returns
   }), /at least one cloud token/);
   assert.equal(factoryCalls, 0);
 });
+
+test('Cloud bootstrap reconciles Docker networks after persisted jobs are recovered and before returning', async () => {
+  const activeId = '22222222-2222-4222-8222-222222222222';
+  const interruptedId = '33333333-3333-4333-8333-333333333333';
+  const recoveredIds = [];
+  const worker = async () => ({ status: 'unused' });
+  worker.reconcileOrphanedNetworks = async ({ activeJobIds }) => {
+    recoveredIds.push(...activeJobIds);
+    return { scanned: 2, removed: [], skipped: [], failed: [] };
+  };
+  const studio = {
+    server: { close() {} },
+    jobs: new Map([
+      [activeId, { id: activeId, status: 'running' }],
+      [interruptedId, { id: interruptedId, status: 'interrupted' }],
+    ]),
+    tokenAdmin: { list: () => [{ tokenId: 'service-a-current' }] },
+    auditAdmin: { keyMetadata: () => ({ activeKeyId: auditKeyId, keyIds: [auditKeyId] }) },
+  };
+  await createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => snapshot('1') },
+    serverOptions: {
+      cloudAllowedHosts: ['api.example.test'],
+      cloudTrustedProxy: true,
+      cloudWorker: worker,
+    },
+    createStudioServerImpl: () => studio,
+  });
+
+  assert.deepEqual(recoveredIds, [activeId]);
+});
+
+test('Cloud bootstrap fails closed when Docker network reconciliation reports a failed network', async () => {
+  let closed = false;
+  const worker = async () => ({ status: 'unused' });
+  worker.reconcileOrphanedNetworks = async () => ({
+    scanned: 1, removed: [], skipped: [], failed: [
+      { network: 'utv-job-11111111-1111-4111-8111-111111111111', reason: 'docker-reconciliation-failed' },
+    ],
+  });
+  const studio = {
+    server: { close() {} },
+    jobs: new Map(),
+    store: { close() { closed = true; } },
+    tokenAdmin: { list: () => [{ tokenId: 'service-a-current' }] },
+    auditAdmin: { keyMetadata: () => ({ activeKeyId: auditKeyId, keyIds: [auditKeyId] }) },
+  };
+  await assert.rejects(createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => snapshot('1') },
+    serverOptions: {
+      cloudAllowedHosts: ['api.example.test'],
+      cloudTrustedProxy: true,
+      cloudWorker: worker,
+    },
+    createStudioServerImpl: () => studio,
+  }), /Cloud Docker network recovery failed/);
+  assert.equal(closed, true);
+});
