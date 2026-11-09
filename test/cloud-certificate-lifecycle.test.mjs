@@ -147,6 +147,22 @@ test('certificate audit adapter writes only safe metadata to the signed platform
   }), /audit event is invalid/i);
 });
 
+test('certificate audit adapter awaits durable audit writes and propagates storage failures', async () => {
+  const recorder = createStudioCertificateAuditRecorder({
+    store: {
+      async recordCloudAudit() {
+        throw new Error('database unavailable');
+      },
+    },
+  });
+  await assert.rejects(recorder.record({
+    action: 'cloud.certificate.issue_started',
+    actorId: 'operator-alpha',
+    replicaId: 'api-a',
+    bundleId: '123e4567-e89b-42d3-a456-426614174000',
+  }), /database unavailable/);
+});
+
 test('issues and activates a replica certificate only after CA verification and mTLS installation verification', async () => {
   const { service, calls, getActive } = createHarness();
   const result = await service.issue(
