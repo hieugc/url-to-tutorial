@@ -9,10 +9,17 @@ const EMPTY_AUDIT_HASH = '0'.repeat(64);
 const terminal = job => ['completed', 'failed', 'cancelled', 'interrupted'].includes(job.status);
 
 export class StudioJobStore {
-  constructor(outputRoot, { auditKey = null, auditKeyRing = null } = {}) {
+  constructor(outputRoot, { auditKey = null, auditKeyRing = null, artifactCipher = null } = {}) {
     if (auditKey !== null && auditKeyRing !== null) {
       throw new TypeError('Configure either auditKey or auditKeyRing, not both');
     }
+    if (artifactCipher !== null && (
+      typeof artifactCipher.encryptBuffer !== 'function' ||
+      typeof artifactCipher.decryptBuffer !== 'function'
+    )) {
+      throw new TypeError('Cloud artifact cipher must support buffer encryption and decryption');
+    }
+    this.artifactCipher = artifactCipher;
     this.auditKeys = new Map();
     this.activeAuditKeyId = null;
     if (auditKeyRing !== null) {
@@ -191,12 +198,57 @@ export class StudioJobStore {
     }
   }
 
+  serializeJob(snapshot) {
+    const serialized = JSON.stringify(snapshot);
+    if (!this.artifactCipher) return serialized;
+    const encrypted = this.artifactCipher.encryptBuffer(Buffer.from(serialized, 'utf8'), {
+      jobId: snapshot.id,
+      filename: 'studio-job-record.json',
+    });
+    return JSON.stringify({
+      storageFormat: 'utv-cloud-job-record-v1',
+      id: snapshot.id,
+      createdAt: snapshot.createdAt,
+      payload: encrypted.toString('base64'),
+    });
+  }
+
+  deserializeJob(raw) {
+    const value = JSON.parse(raw);
+    if (value?.storageFormat !== 'utv-cloud-job-record-v1') {
+      if (value?.storageFormat !== undefined) {
+        throw new Error('Studio job record uses an unsupported encrypted storage format');
+      }
+      // Existing cloud installations can migrate legacy plaintext rows during
+      // the pre-listen artifact-protection step. Local-only stores stay plaintext.
+      return value;
+    }
+    if (!this.artifactCipher || typeof value.id !== 'string' ||
+        typeof value.createdAt !== 'string' || typeof value.payload !== 'string' ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.payload)) {
+      throw new Error('Encrypted Studio job record cannot be opened by this host');
+    }
+    const encrypted = Buffer.from(value.payload, 'base64');
+    if (encrypted.toString('base64') !== value.payload) {
+      throw new Error('Encrypted Studio job record encoding is invalid');
+    }
+    const plaintext = this.artifactCipher.decryptBuffer(encrypted, {
+      jobId: value.id,
+      filename: 'studio-job-record.json',
+    }, 64 * 1024 * 1024);
+    const snapshot = JSON.parse(plaintext.toString('utf8'));
+    if (!snapshot || snapshot.id !== value.id || snapshot.createdAt !== value.createdAt) {
+      throw new Error('Encrypted Studio job record identity does not match its envelope');
+    }
+    return snapshot;
+  }
+
   save(job) {
     const snapshot = { ...job };
     delete snapshot.abortController;
     delete snapshot._deduplicated;
     const now = new Date().toISOString();
-    this.put.run(snapshot.id, snapshot.createdAt || now, now, JSON.stringify(snapshot));
+    this.put.run(snapshot.id, snapshot.createdAt || now, now, this.serializeJob(snapshot));
   }
 
   reserveCloudStorage(jobId, tenantId, bytes, budgetBytes, createdAt) {
@@ -277,7 +329,7 @@ export class StudioJobStore {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.put.run(snapshot.id, snapshot.createdAt, now, JSON.stringify(snapshot));
+      this.put.run(snapshot.id, snapshot.createdAt, now, this.serializeJob(snapshot));
       this.recordCloudSubmission.run(snapshot.id, snapshot.tenantId, snapshot.projectId, snapshot.createdAt);
       if (storage?.maxJobsPerMonth && storage?.period) {
         const usage = this.monthlyUsageStatement.get(snapshot.tenantId, storage.period);
@@ -627,7 +679,7 @@ export class StudioJobStore {
     // Recovery/retention must see old rows too, including databases created by
     // earlier versions. Limiting reads hid expired artifacts and active jobs.
     return this.db.prepare('SELECT json FROM studio_jobs ORDER BY created_at, rowid')
-      .all().map(row => JSON.parse(row.json));
+      .all().map(row => this.deserializeJob(row.json));
   }
 
   recover() {
