@@ -19,8 +19,8 @@ function validateLeaseMs(leaseMs) {
   }
 }
 
-function validateReplicaIds(replicaIds) {
-  if (!Array.isArray(replicaIds) || replicaIds.length === 0 ||
+function validateReplicaIds(replicaIds, { allowEmpty = false } = {}) {
+  if (!Array.isArray(replicaIds) || (!allowEmpty && replicaIds.length === 0) ||
       replicaIds.some(id => typeof id !== 'string' || !REPLICA_ID.test(id)) ||
       new Set(replicaIds).size !== replicaIds.length) {
     throw new TypeError('A unique non-empty replica ID list is required');
@@ -192,7 +192,11 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
         typeof input.actorId !== 'string' || !ACTOR_ID.test(input.actorId) ||
         !Array.isArray(input.tokenIds) || input.tokenIds.some(id => typeof id !== 'string' || !REPLICA_ID.test(id)) ||
         !input.auditKeyRing || typeof input.auditKeyRing.activeKeyId !== 'string' ||
-        !Array.isArray(input.auditKeyRing.keyIds)) {
+        !/^[a-f0-9]{16}$/.test(input.auditKeyRing.activeKeyId) ||
+        !Array.isArray(input.auditKeyRing.keyIds) || input.auditKeyRing.keyIds.length === 0 ||
+        input.auditKeyRing.keyIds.some(id => typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) ||
+        new Set(input.auditKeyRing.keyIds).size !== input.auditKeyRing.keyIds.length ||
+        !input.auditKeyRing.keyIds.includes(input.auditKeyRing.activeKeyId)) {
       throw new TypeError('Replica acknowledgement metadata is invalid');
     }
     return run(async client => {
@@ -228,8 +232,8 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
         `UPDATE tutorial_credential_rollouts
             SET acknowledged = acknowledged - $4,
                 failures = failures || jsonb_build_object($4, $5),
-                failed_replica_ids = (SELECT COALESCE(jsonb_agg(value ORDER BY value), '[]'::jsonb)
-                  FROM (SELECT DISTINCT value FROM jsonb_array_elements_text(failed_replica_ids || to_jsonb($4::text)) value) items),
+                failed_replica_ids = (SELECT COALESCE(jsonb_agg(DISTINCT item ORDER BY item), '[]'::jsonb)
+                  FROM jsonb_array_elements_text(failed_replica_ids || jsonb_build_array($4)) AS existing(item)),
                 updated_at = clock_timestamp()
           WHERE rollout_id = $1 AND lease_owner = $2::uuid AND fencing_token = $3::bigint`,
         [input.rolloutId, lease.ownerId, lease.fencingToken, input.replicaId, input.errorCode],
@@ -241,8 +245,8 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
   async function markPartialRollout(input) {
     assertInput(input, ['rolloutId', 'leaseToken', 'targetVersion', 'acknowledgedReplicaIds', 'failedReplicaIds', 'actorId']);
     const lease = parseLeaseToken(input.leaseToken);
-    const acknowledged = validateReplicaIds(input.acknowledgedReplicaIds);
-    const failed = input.failedReplicaIds.length ? validateReplicaIds(input.failedReplicaIds) : [];
+    const acknowledged = validateReplicaIds(input.acknowledgedReplicaIds, { allowEmpty: true });
+    const failed = validateReplicaIds(input.failedReplicaIds, { allowEmpty: true });
     if (typeof input.targetVersion !== 'string' || !VERSION.test(input.targetVersion) ||
         typeof input.actorId !== 'string' || !ACTOR_ID.test(input.actorId)) {
       throw new TypeError('Partial rollout metadata is invalid');
@@ -272,11 +276,12 @@ export function createPostgresRolloutStore({ pool, leaseMs = 300_000 } = {}) {
     return run(async client => {
       await requireLease(client, input, lease);
       const row = await client.query(
-        'SELECT acknowledged FROM tutorial_credential_rollouts WHERE rollout_id = $1 FOR UPDATE',
+        'SELECT acknowledged, replica_ids FROM tutorial_credential_rollouts WHERE rollout_id = $1 FOR UPDATE',
         [input.rolloutId],
       );
       const ackIds = Object.keys(row.rows[0].acknowledged ?? {}).sort();
-      if (JSON.stringify(ackIds) !== JSON.stringify(replicaIds)) {
+      if (JSON.stringify(ackIds) !== JSON.stringify(replicaIds) ||
+          JSON.stringify([...row.rows[0].replica_ids].sort()) !== JSON.stringify(replicaIds)) {
         throw new Error('All replicas must acknowledge before rollout completion');
       }
       const control = await client.query(
