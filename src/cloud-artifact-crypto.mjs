@@ -405,8 +405,8 @@ export function createCloudArtifactCipher({
     const file = await open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
     try {
       const info = await file.stat();
-      if (!info.isFile() || info.nlink !== 1) {
-        throw new Error('Cloud artifact must be a single-link regular file');
+      if (!info.isFile() || info.nlink !== 1 || !Number.isSafeInteger(info.size)) {
+        throw new Error('Cloud artifact must be a single-link regular file with a safe size');
       }
       const header = await readExactly(file, HEADER_BYTES, 0);
       const parsed = parseHeader(header, info.size, ring.keys, maxBytes);
