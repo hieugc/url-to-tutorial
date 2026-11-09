@@ -114,6 +114,42 @@ const result = await runCloudCredentialRollout({
 
 Use a dedicated database role with access only to the coordination tables. Keep database backups encrypted and access-controlled. This adapter is durable coordination code, not a deployed PostgreSQL service, certificate authority, break-glass approval workflow, or production rollout. Do not expose Cloud API until all infrastructure, audit, retention and independent security gates pass.
 
+### Break-glass dual-control recovery
+
+`src/cloud-break-glass.mjs` provides a host-code-only recovery workflow. Supported actions are deliberately limited to revoking one credential ID or one principal ID; it does not accept shell commands, arbitrary callbacks, raw tokens or client-supplied execution payloads.
+
+Every proposal, approval and execution requires a fresh MFA-verified operator authorization. The proposer and approver must be different identities, and the second approver must perform the one-time execution. Requests expire, the PostgreSQL store atomically claims execution, and a claimed action cannot be replayed. If the process crashes after claiming execution, leave the request for manual review and create a newly approved request rather than replaying an ambiguous action.
+
+Apply `migrations/003-cloud-break-glass.sql`. The PostgreSQL store persists only request/action metadata, operator IDs, expiry and a sanitized result code. It never stores credentials, MFA assertions, private keys or certificates. The service writes proposal/approval/execution events through an injected tamper-evident audit recorder and refuses to execute if the execution-start audit write fails. The default token-admin executor maps only to the existing trusted `revokeToken` and `revokePrincipal` capabilities.
+
+There is no tenant-facing or public HTTP endpoint. Wire this service only in a trusted control-plane process with a durable PostgreSQL pool, MFA operator authenticator, audit-chain writer and the in-process `tokenAdmin` capability. A pending/executing request is not permission to bypass MFA or normal incident review.
+
+```js
+import { createPostgresBreakGlassStore } from '../src/cloud-break-glass-postgres.mjs';
+import {
+  createBreakGlassRecovery,
+  createTokenAdminBreakGlassExecutor,
+} from '../src/cloud-break-glass.mjs';
+
+const breakGlass = createBreakGlassRecovery({
+  approvalStore: createPostgresBreakGlassStore({ pool }),
+  operatorAuthenticator,
+  auditRecorder, // append to the existing tamper-evident audit chain
+  actionExecutor: createTokenAdminBreakGlassExecutor({ tokenAdmin }),
+});
+
+const request = await breakGlass.propose(
+  proposerSession,
+  { type: 'revoke_token', resourceId: 'service-a-previous' },
+  'Emergency revocation after confirmed credential exposure',
+);
+// A different MFA-verified operator approves; that approver performs execution.
+await breakGlass.approve(approverSession, request.requestId);
+await breakGlass.execute(approverSession, request.requestId);
+```
+
+This is the dual-control workflow and persistence adapter, not a deployed incident-response service. Independent operator identity proofing, on-call procedures, recovery drills, audit archive retention and production security acceptance remain required.
+
 - Use separate least-privilege roles: API runtime needs `secretsmanager:GetSecretValue` (and `kms:Decrypt` only when required by a customer-managed key); the publisher role additionally needs `secretsmanager:PutSecretValue` and only the required KMS encrypt/data-key permissions. Configure CloudTrail retention, alerting and IAM review in the AWS account; the adapter does not configure those controls.
 - `src/cloud-rollout.mjs` adds a host-side multi-replica rollout coordinator. It reads one immutable secret revision, computes a secret-free SHA-256 snapshot digest, fixes the replica inventory for that rollout, and asks each replica to reload that exact revision through its own secret-manager adapter. The coordinator never sends raw tokens or signing keys to replica RPC clients.
 - The operator authenticator must implement `createReplicaAssertion(identity, claims)` and return a short-lived signed assertion scoped to `action`, `rolloutId`, `targetVersion`, `replicaId` and `expiresAt`. Each replica must independently validate that assertion, require its own configured replica ID to equal the assertion audience, and match the `rolloutId` and `expectedVersion` request constraints before applying a reload. The internal replica transport must use mutually authenticated TLS; do not expose this RPC to tenants or the public internet.
