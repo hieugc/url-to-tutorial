@@ -72,9 +72,11 @@ export function createPostgresCertificateStore({ pool } = {}) {
   }
 
   async function stageCertificate(input) {
-    uuid(input?.bundleId, 'certificate bundle ID');
-    uuid(input?.previousBundleId ?? undefined, 'previous certificate bundle ID');
-    if (input.previousBundleId === null) input.previousBundleId = null;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('Certificate bundle metadata is required');
+    uuid(input.bundleId, 'certificate bundle ID');
+    if (input.previousBundleId !== undefined && input.previousBundleId !== null) {
+      uuid(input.previousBundleId, 'previous certificate bundle ID');
+    }
     if (typeof input.replicaId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(input.replicaId) ||
         typeof input.serialNumber !== 'string' || !/^[A-Fa-f0-9]{1,64}$/.test(input.serialNumber) ||
         typeof input.fingerprint256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.fingerprint256) ||
