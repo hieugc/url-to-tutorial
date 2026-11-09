@@ -78,6 +78,29 @@ function validateAuditKeyRing(ring) {
   }
 }
 
+function validateArtifactKeyRing(ring) {
+  if (!ring || typeof ring !== 'object' || Array.isArray(ring) ||
+      Object.getPrototypeOf(ring) !== Object.prototype ||
+      Object.keys(ring).some(key => !['activeKeyId', 'keys'].includes(key)) ||
+      typeof ring.activeKeyId !== 'string' || !/^[a-f0-9]{16}$/.test(ring.activeKeyId) ||
+      !ring.keys || typeof ring.keys !== 'object' || Array.isArray(ring.keys) ||
+      Object.getPrototypeOf(ring.keys) !== Object.prototype) {
+    throw new TypeError('AWS cloud secret bundle contains an invalid artifact encryption key ring');
+  }
+  const keyIds = Object.keys(ring.keys);
+  if (!keyIds.length || keyIds.length > 32 || !keyIds.includes(ring.activeKeyId)) {
+    throw new TypeError('AWS cloud secret bundle is missing its active artifact encryption key');
+  }
+  for (const keyId of keyIds) {
+    const value = ring.keys[keyId];
+    if (!/^[a-f0-9]{16}$/.test(keyId) || typeof value !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(value) ||
+        createHash('sha256').update(Buffer.from(value, 'hex')).digest('hex').slice(0, 16) !== keyId) {
+      throw new TypeError('AWS cloud secret bundle contains an invalid artifact encryption key fingerprint');
+    }
+  }
+}
+
 function parseCloudSecret(raw, expectedVersion) {
   let parsed;
   try {
@@ -88,7 +111,7 @@ function parseCloudSecret(raw, expectedVersion) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
       Object.getPrototypeOf(parsed) !== Object.prototype ||
       Object.keys(parsed).some(key =>
-        !['schemaVersion', 'revision', 'tokens', 'auditKeyRing'].includes(key)) ||
+        !['schemaVersion', 'revision', 'tokens', 'auditKeyRing', 'artifactKeyRing'].includes(key)) ||
       parsed.schemaVersion !== 1 ||
       typeof parsed.revision !== 'string' || !VERSION.test(parsed.revision) ||
       !Array.isArray(parsed.tokens) || parsed.tokens.length === 0) {
@@ -99,6 +122,7 @@ function parseCloudSecret(raw, expectedVersion) {
   }
 
   validateAuditKeyRing(parsed.auditKeyRing);
+  validateArtifactKeyRing(parsed.artifactKeyRing);
   // Reuse the production registry validator; it retains only token digests.
   try {
     createCloudAuth({ tokens: parsed.tokens });
@@ -110,6 +134,7 @@ function parseCloudSecret(raw, expectedVersion) {
     version: parsed.revision,
     tokens: parsed.tokens,
     auditKeyRing: parsed.auditKeyRing,
+    artifactKeyRing: parsed.artifactKeyRing,
   };
 }
 
@@ -121,7 +146,8 @@ function parseCloudSecret(raw, expectedVersion) {
  *   "schemaVersion": 1,
  *   "revision": "42",
  *   "tokens": [...],
- *   "auditKeyRing": { "activeKeyId": "...", "keys": { "...": "..." } }
+ *   "auditKeyRing": { "activeKeyId": "...", "keys": { "...": "..." } },
+ *   "artifactKeyRing": { "activeKeyId": "...", "keys": { "...": "<32-byte lowercase hex>" } }
  * }
  *
  * The writer must attach the immutable custom version stage UTVREV_<revision>
@@ -218,9 +244,11 @@ function sameCloudSnapshot(left, right) {
   return JSON.stringify({
     tokens: left.tokens,
     auditKeyRing: left.auditKeyRing,
+    artifactKeyRing: left.artifactKeyRing,
   }) === JSON.stringify({
     tokens: right.tokens,
     auditKeyRing: right.auditKeyRing,
+    artifactKeyRing: right.artifactKeyRing,
   });
 }
 
@@ -272,6 +300,7 @@ export function createAwsSecretsManagerPublisher({
         revision: nextVersion,
         tokens: snapshot?.tokens,
         auditKeyRing: snapshot?.auditKeyRing,
+        artifactKeyRing: snapshot?.artifactKeyRing,
       };
 
       let secretString;
