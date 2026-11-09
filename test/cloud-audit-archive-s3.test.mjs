@@ -72,7 +72,7 @@ test('S3 audit archive appends immutable batch and advances checkpoint with exac
   const result = await sink.archiveBatch(batch());
   assert.equal(result.throughSequence, 2);
   assert.equal(result.throughHash, batch().throughHash);
-  assert.equal(client.objects.size, 2);
+  assert.equal(client.objects.size, 3);
   const batchPut = [...client.objects.keys()].find(key => key.includes('/batches/'));
   assert.ok(batchPut);
   const immutablePut = client.putInputs.find(input => input.Key.includes('/batches/'));
@@ -93,7 +93,7 @@ test('S3 audit archive retry is idempotent and does not rewrite immutable object
   const first = await sink.archiveBatch(value);
   const second = await sink.archiveBatch(value);
   assert.deepEqual(second, first);
-  assert.equal(client.nextEtag, 3);
+  assert.equal(client.nextEtag, 4);
 });
 
 test('S3 audit archive refuses a batch that does not extend the external checkpoint', async () => {
@@ -125,6 +125,17 @@ test('S3 audit archive refuses to overwrite an existing batch key with different
   const conflicting = batch();
   conflicting.events[0].action = 'tampered';
   await assert.rejects(sink.archiveBatch(conflicting), /immutable archive batch conflict/i);
+});
+
+test('S3 archive requires KMS encryption and bounded compliance retention configuration', () => {
+  const base = {
+    client: new FakeS3(), bucket: 'audit-archive-test', replicaId: 'api-a',
+    commands: { GetObjectCommand, PutObjectCommand },
+  };
+  assert.throws(() => createS3AuditArchiveSink(base), /KMS key/i);
+  assert.throws(() => createS3AuditArchiveSink({
+    ...base, kmsKeyId: 'alias/audit-key', retentionDays: 0,
+  }), /retentionDays/i);
 });
 
 test('archive scheduler drains bounded batches and stops when the archive is caught up', async () => {
