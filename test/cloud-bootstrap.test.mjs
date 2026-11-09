@@ -107,6 +107,7 @@ test('Token reload requires MFA-verified operator and audits replacement before 
     let tokens = options.cloudTokens.map(({ token, ...safe }) => safe);
     return {
       server: { close() {} },
+      protectCloudArtifacts: async () => ({ jobs: 0, files: 0, encryptedBytes: 0 }),
       tokenAdmin: {
         list: () => tokens,
         replace: (next, { actorId } = {}) => {
