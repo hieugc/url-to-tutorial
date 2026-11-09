@@ -126,12 +126,10 @@ export function createS3AuditArchiveSink({
       }
     }
 
-    if (checkpoint.throughSequence === batch.throughSequence &&
-        checkpoint.throughHash === batch.throughHash) {
-      return { throughSequence: batch.throughSequence, throughHash: batch.throughHash };
-    }
-    if (checkpoint.throughSequence !== batch.previousSequence ||
-        checkpoint.throughHash !== batch.previousHash) {
+    const alreadyArchived = checkpoint.throughSequence === batch.throughSequence &&
+      checkpoint.throughHash === batch.throughHash;
+    if (!alreadyArchived && (checkpoint.throughSequence !== batch.previousSequence ||
+        checkpoint.throughHash !== batch.previousHash)) {
       throw new Error('S3 audit archive checkpoint does not match the batch predecessor');
     }
 
@@ -151,6 +149,13 @@ export function createS3AuditArchiveSink({
     const archivedAtMs = Date.parse(archivedAt);
     if (!Number.isFinite(archivedAtMs)) throw new Error('Audit archive clock returned an invalid timestamp');
     const retainUntil = new Date(archivedAtMs + retentionDays * 24 * 60 * 60_000);
+    if (alreadyArchived) {
+      const existingBatch = await readObject(batchKey);
+      if (!existingBatch || existingBatch.body !== batchBody) {
+        throw new Error('S3 immutable archive batch conflict');
+      }
+      return { throughSequence: batch.throughSequence, throughHash: batch.throughHash };
+    }
     await putImmutable(batchKey, batchBody, retainUntil);
 
     const checkpointHistoryKey = root + '/checkpoints/' + last + '-' +
