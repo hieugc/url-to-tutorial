@@ -1,7 +1,24 @@
 import { createHash } from 'node:crypto';
 import { createStudioServer } from './studio-server.mjs';
+import { createCloudArtifactCipher } from './cloud-artifact-crypto.mjs';
 
 const OPERATOR_ID = /^[A-Za-z0-9][A-Za-z0-9_.@-]{1,63}$/;
+
+function artifactKeyRingMetadata(ring) {
+  const cipher = createCloudArtifactCipher({ keyRing: ring });
+  const metadata = cipher.keyMetadata();
+  const keyMaterialDigest = createHash('sha256').update(JSON.stringify(
+    metadata.keyIds.map(keyId => [
+      keyId,
+      createHash('sha256').update(Buffer.from(ring.keys[keyId], 'hex')).digest('hex'),
+    ]),
+  )).digest('hex');
+  return Object.freeze({
+    activeKeyId: metadata.activeKeyId,
+    keyIds: metadata.keyIds,
+    keyMaterialDigest,
+  });
+}
 
 function validateSecretSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot) ||
@@ -17,6 +34,7 @@ function validateSecretSnapshot(snapshot) {
       !ring.keys || typeof ring.keys !== 'object' || Array.isArray(ring.keys)) {
     throw new TypeError('Secret manager snapshot must contain a versioned audit key ring');
   }
+  artifactKeyRingMetadata(snapshot.artifactKeyRing);
   return snapshot;
 }
 
@@ -119,14 +137,17 @@ export async function createCloudStudioFromSecretManager({
   const snapshot = validateSecretSnapshot(await readCloudSecrets(secretManager));
   const initialTokenDigest = digestTokens(snapshot.tokens);
   const initialAuditKeyRing = auditKeyRingMetadata(snapshot.auditKeyRing);
+  const initialArtifactKeyRing = artifactKeyRingMetadata(snapshot.artifactKeyRing);
   const studio = createStudioServerImpl({
     ...serverOptions,
     cloudMode: true,
     cloudTokens: snapshot.tokens,
     cloudAuditKey: null,
     cloudAuditKeyRing: snapshot.auditKeyRing,
+    cloudArtifactKeyRing: snapshot.artifactKeyRing,
   });
-  if (!studio?.server || !studio.tokenAdmin || !studio.auditAdmin) {
+  if (!studio?.server || !studio.tokenAdmin || !studio.auditAdmin ||
+      typeof studio.protectCloudArtifacts !== 'function') {
     throw new Error('Cloud server factory did not return the trusted token/audit administration capabilities');
   }
   const liveKeyRing = studio.auditAdmin.keyMetadata();
@@ -159,6 +180,16 @@ export async function createCloudStudioFromSecretManager({
     }
   }
 
+  try {
+    // Encrypt legacy plaintext artifacts and SQLite job snapshots before the
+    // HTTP server is returned to its caller and can accept tenant requests.
+    await studio.protectCloudArtifacts();
+  } catch {
+    studio.store?.close?.();
+    studio.server?.close?.();
+    throw new Error('Cloud artifact protection failed; refusing to start the Cloud API');
+  }
+
   let secretVersion = snapshot.version;
   let tokenDigest = initialTokenDigest;
   const keyRingDigest = initialAuditKeyRing.keyMaterialDigest;
@@ -171,6 +202,10 @@ export async function createCloudStudioFromSecretManager({
       tokenCount: tokenMetadata.length,
       tokenIds: Object.freeze(tokenMetadata.map(token => token.tokenId)),
       auditKeyRing: studio.auditAdmin.keyMetadata(),
+      artifactKeyRing: Object.freeze({
+        activeKeyId: initialArtifactKeyRing.activeKeyId,
+        keyIds: initialArtifactKeyRing.keyIds,
+      }),
     });
   }
 
@@ -217,6 +252,12 @@ export async function createCloudStudioFromSecretManager({
       }
       if (BigInt(next.version) < BigInt(secretVersion)) {
         throw new Error('Secret manager returned an older snapshot revision; refusing credential rollback');
+      }
+      const nextArtifactRing = artifactKeyRingMetadata(next.artifactKeyRing);
+      if (nextArtifactRing.activeKeyId !== initialArtifactKeyRing.activeKeyId ||
+          JSON.stringify([...nextArtifactRing.keyIds].sort()) !== JSON.stringify([...initialArtifactKeyRing.keyIds].sort()) ||
+          nextArtifactRing.keyMaterialDigest !== initialArtifactKeyRing.keyMaterialDigest) {
+        throw new Error('Artifact key ring changes require a coordinated restart and staged key rotation');
       }
       const nextRing = auditKeyRingMetadata(next.auditKeyRing);
       if (nextRing.activeKeyId !== initialAuditKeyRing.activeKeyId ||
