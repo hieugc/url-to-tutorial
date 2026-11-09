@@ -134,7 +134,7 @@ test('publish lock releases ownership when the protected operation throws', asyn
   assert.equal(pool.rows.size, 0);
 });
 
-test('publish lock validates resource and lease configuration', () => {
+test('publish lock validates resource and lease configuration', async () => {
   const pool = new FakePostgresPool();
   assert.throws(() => createPostgresPublishLock({ pool: {} }), /query-capable PostgreSQL pool/);
   const lock = createPostgresPublishLock({ pool });
