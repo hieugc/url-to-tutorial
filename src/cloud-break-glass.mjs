@@ -172,12 +172,25 @@ export function createBreakGlassRecovery({
       requestId,
       executorId: identity.actorId,
     });
-    await auditRecorder.record({
-      action: 'cloud.break_glass.execution_started',
-      actorId: identity.actorId,
-      requestId,
-      proposerId: current.proposerId,
-    });
+    try {
+      await auditRecorder.record({
+        action: 'cloud.break_glass.execution_started',
+        actorId: identity.actorId,
+        requestId,
+        proposerId: current.proposerId,
+      });
+    } catch {
+      try {
+        await approvalStore.failRequest({
+          requestId,
+          executionToken: claim.executionToken,
+          errorCode: 'AUDIT_WRITE_FAILED',
+        });
+      } catch {
+        throw new Error('Break-glass audit failed and its outcome could not be persisted; manual review is required');
+      }
+      throw new Error('Break-glass execution stopped because the audit write failed');
+    }
 
     try {
       const result = await actionExecutor.execute(current.action, {
