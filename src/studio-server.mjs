@@ -339,6 +339,7 @@ export function createStudioServer({
       // authenticated encrypted SQLite envelope before accepting cloud traffic.
       store.save(job);
     }
+    store.compactEncryptedRecords();
     cloudArtifactsReady = true;
     return Object.freeze({ jobs: jobs.size, files, encryptedBytes });
   }
