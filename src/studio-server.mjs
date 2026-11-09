@@ -292,6 +292,7 @@ export function createStudioServer({
   }
   const recoveredJobs = store.recover();
   const jobs = new Map(recoveredJobs.map(job => [job.id, job]));
+  let cloudArtifactsReady = !cloudMode;
   async function protectCloudArtifacts() {
     if (!cloudMode) return Object.freeze({ jobs: 0, files: 0, encryptedBytes: 0 });
     let files = 0;
@@ -338,6 +339,7 @@ export function createStudioServer({
       // authenticated encrypted SQLite envelope before accepting cloud traffic.
       store.save(job);
     }
+    cloudArtifactsReady = true;
     return Object.freeze({ jobs: jobs.size, files, encryptedBytes });
   }
 
@@ -642,6 +644,9 @@ export function createStudioServer({
   }
 
   const server = createServer(async (req, res) => {
+    if (cloudMode && !cloudArtifactsReady) {
+      return json(res, 503, { error: 'Cloud artifact protection has not completed' });
+    }
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
