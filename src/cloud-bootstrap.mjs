@@ -149,7 +149,10 @@ export async function createCloudStudioFromSecretManager({
       const activeJobIds = [...studio.jobs.values()]
         .filter(job => ['queued', 'running'].includes(job?.status))
         .map(job => job.id);
-      await reconcileNetworks({ activeJobIds });
+      const recovery = await reconcileNetworks({ activeJobIds });
+      if (!recovery || !Array.isArray(recovery.failed) || recovery.failed.length > 0) {
+        throw new Error('Docker network reconciliation was incomplete');
+      }
     } catch {
       studio.store?.close?.();
       throw new Error('Cloud Docker network recovery failed; refusing to start the Cloud API');
