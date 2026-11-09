@@ -42,6 +42,35 @@ jobs:
           path: output/
           retention-days: 7
 
+  postgres-coordination:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: tutorial-test
+          POSTGRES_DB: tutorial_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tutorial_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false pg@8.16.3
+      - name: Verify distributed publish-lock semantics against PostgreSQL
+        run: node --test test/cloud-coordination-postgres.integration.test.mjs
+        env:
+          COORDINATION_DATABASE_URL: postgres://postgres:tutorial-test@localhost:5432/tutorial_test
+
   macos-regression:
     runs-on: macos-15
     timeout-minutes: 30
