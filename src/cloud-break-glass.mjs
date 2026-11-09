@@ -264,3 +264,52 @@ export function createTokenAdminBreakGlassExecutor({ tokenAdmin } = {}) {
     },
   });
 }
+
+/** Maps break-glass lifecycle events into the existing signed platform audit chain. */
+export function createStudioBreakGlassAuditRecorder({ store } = {}) {
+  if (!store || typeof store.recordCloudAudit !== 'function') {
+    throw new TypeError('Studio cloud audit store is required');
+  }
+  const allowedActions = new Set([
+    'cloud.break_glass.proposed',
+    'cloud.break_glass.approval_authorized',
+    'cloud.break_glass.execution_started',
+    'cloud.break_glass.completed',
+    'cloud.break_glass.failed',
+  ]);
+  return Object.freeze({
+    async record(event) {
+      if (!event || typeof event !== 'object' || Array.isArray(event) ||
+          Object.keys(event).some(key => ![
+            'action', 'actorId', 'requestId', 'actionType', 'resourceId',
+            'proposerId', 'resultCode',
+          ].includes(key)) ||
+          !allowedActions.has(event.action) ||
+          typeof event.actorId !== 'string' || !ACTOR_ID.test(event.actorId) ||
+          typeof event.requestId !== 'string' || !REQUEST_ID.test(event.requestId) ||
+          (event.actionType !== undefined && !ACTIONS.has(event.actionType)) ||
+          (event.resourceId !== undefined &&
+            (typeof event.resourceId !== 'string' || !RESOURCE_ID.test(event.resourceId))) ||
+          (event.proposerId !== undefined &&
+            (typeof event.proposerId !== 'string' || !ACTOR_ID.test(event.proposerId))) ||
+          (event.resultCode !== undefined &&
+            (typeof event.resultCode !== 'string' || !ERROR_CODE.test(event.resultCode)))) {
+        throw new TypeError('Break-glass audit event is invalid');
+      }
+      store.recordCloudAudit({
+        tenantId: 'platform',
+        principalId: event.actorId,
+        action: event.action,
+        resourceId: event.resourceId ?? null,
+        outcome: event.action === 'cloud.break_glass.failed' ? 'failed' : 'success',
+        details: {
+          requestId: event.requestId,
+          ...(event.actionType ? { actionType: event.actionType } : {}),
+          ...(event.proposerId ? { proposerId: event.proposerId } : {}),
+          ...(event.resultCode ? { resultCode: event.resultCode } : {}),
+        },
+      });
+    },
+  });
+}
+
