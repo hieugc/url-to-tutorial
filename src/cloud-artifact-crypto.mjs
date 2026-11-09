@@ -8,7 +8,6 @@ import {
 import { constants as fsConstants } from 'node:fs';
 import {
   lstat,
-  mkdir,
   open,
   readdir,
   rename,
@@ -370,7 +369,16 @@ export function createCloudArtifactCipher({
         !jobInfo.isDirectory() || jobInfo.isSymbolicLink()) {
       throw new Error('Cloud artifact output directory is unsafe');
     }
-    const filePath = path.join(jobDir, ...relative.split('/'));
+    let parentDirectory = jobDir;
+    const pathParts = relative.split('/');
+    for (const part of pathParts.slice(0, -1)) {
+      parentDirectory = path.join(parentDirectory, part);
+      const parentInfo = await lstat(parentDirectory);
+      if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink()) {
+        throw new Error('Cloud artifact parent directory is unsafe');
+      }
+    }
+    const filePath = path.join(parentDirectory, pathParts.at(-1));
     const file = await open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
     try {
       const info = await file.stat();
@@ -412,7 +420,7 @@ export function createCloudArtifactCipher({
     }
   }
 
-  async function readFile(outputRoot, jobId, filename, maxBytes) {
+  async function readFile(outputRoot, jobId, filename, maxBytes = Number.MAX_SAFE_INTEGER) {
     const opened = await openReadStream(outputRoot, jobId, filename, maxBytes);
     const chunks = [];
     let total = 0;
