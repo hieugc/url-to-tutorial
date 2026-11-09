@@ -7,6 +7,8 @@ const tokenA = 'aws-publisher-current-token-material-0123456789abcdef';
 const tokenB = 'aws-publisher-next-token-material-0123456789abcdef';
 const auditKey = 'aws-publisher-audit-signing-key-material-0123456789';
 const auditKeyId = createHash('sha256').update(auditKey).digest('hex').slice(0, 16);
+const artifactKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const artifactKeyId = createHash('sha256').update(Buffer.from(artifactKey, 'hex')).digest('hex').slice(0, 16);
 
 function snapshot(revision, token) {
   return {
@@ -20,6 +22,7 @@ function snapshot(revision, token) {
       projectIds: ['project-a'],
     }],
     auditKeyRing: { activeKeyId: auditKeyId, keys: { [auditKeyId]: auditKey } },
+    artifactKeyRing: { activeKeyId: artifactKeyId, keys: { [artifactKeyId]: artifactKey } },
   };
 }
 
@@ -130,7 +133,7 @@ function fakeAws(initial = snapshot('41', tokenA), options = {}) {
 test('publishes the next immutable revision and assigns AWSCURRENT plus UTVREV stage', async () => {
   const { publisher, calls, stages } = fakeAws();
   const result = await publisher.publishCloudSecretSnapshot({
-    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing, artifactKeyRing: snapshot('0', tokenB).artifactKeyRing },
     expectedCurrentVersion: '41',
   });
 
@@ -167,7 +170,7 @@ test('rejects a stale expected current revision before writing', async () => {
   const current = snapshot('43', tokenA);
   const { publisher, calls } = fakeAws(current);
   await assert.rejects(publisher.publishCloudSecretSnapshot({
-    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing, artifactKeyRing: snapshot('0', tokenB).artifactKeyRing },
     expectedCurrentVersion: '41',
   }), /current secret revision changed/);
   assert.equal(calls.some(call => call.SecretString), false);
@@ -179,6 +182,7 @@ test('rejects invalid snapshot material before contacting PutSecretValue', async
     snapshot: {
       tokens: [{ tokenId: 'bad', principalId: 'bad', token: 'short' }],
       auditKeyRing: { activeKeyId: auditKeyId, keys: { [auditKeyId]: auditKey } },
+      artifactKeyRing: { activeKeyId: artifactKeyId, keys: { [artifactKeyId]: artifactKey } },
     },
     expectedCurrentVersion: '41',
   }), /invalid bearer-token registry|invalid audit key ring/);
@@ -200,7 +204,7 @@ test('requires a durable publish lock and verifies the lease before writing', as
   const lock = fakeLock({ loseAt: 2 });
   const { publisher: leasePublisher, calls } = fakeAws(snapshot('41', tokenA), { publishLock: lock });
   await assert.rejects(leasePublisher.publishCloudSecretSnapshot({
-    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing, artifactKeyRing: snapshot('0', tokenB).artifactKeyRing },
     expectedCurrentVersion: '41',
   }), /lease is no longer valid/);
   assert.equal(calls.some(call => call.SecretString), false);
@@ -209,7 +213,7 @@ test('requires a durable publish lock and verifies the lease before writing', as
 test('redacts AWS PutSecretValue errors', async () => {
   const { publisher } = fakeAws(snapshot('41', tokenA), { putError: true });
   await assert.rejects(publisher.publishCloudSecretSnapshot({
-    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing, artifactKeyRing: snapshot('0', tokenB).artifactKeyRing },
     expectedCurrentVersion: '41',
   }), error => error.message === 'AWS Secrets Manager write failed' &&
     !error.message.includes(tokenB));
@@ -218,7 +222,7 @@ test('redacts AWS PutSecretValue errors', async () => {
 test('rejects a successful PutSecretValue response if AWSCURRENT did not advance', async () => {
   const { publisher } = fakeAws(snapshot('41', tokenA), { omitCurrentStage: true });
   await assert.rejects(publisher.publishCloudSecretSnapshot({
-    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing, artifactKeyRing: snapshot('0', tokenB).artifactKeyRing },
     expectedCurrentVersion: '41',
   }), /current stage did not advance/);
 });
@@ -228,7 +232,7 @@ test('refuses to reuse a revision stage already attached to any AWS version', as
   const { publisher, calls, stages } = fakeAws();
   stages.set('UTVREV_42', '41');
   await assert.rejects(publisher.publishCloudSecretSnapshot({
-    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing, artifactKeyRing: snapshot('0', tokenB).artifactKeyRing },
     expectedCurrentVersion: '41',
   }), /immutable revision stage already exists/);
   assert.equal(calls.some(call => call.SecretString), false);
@@ -240,7 +244,7 @@ test('fails closed when AWS reports zero or multiple AWSCURRENT stage assignment
       currentStageAssignments: assignments,
     });
     await assert.rejects(publisher.publishCloudSecretSnapshot({
-      snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+      snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing, artifactKeyRing: snapshot('0', tokenB).artifactKeyRing },
       expectedCurrentVersion: '41',
     }), /exactly one AWSCURRENT/);
     assert.equal(calls.some(call => call.SecretString), false);
@@ -251,7 +255,7 @@ test('reconciles a retry after PutSecretValue committed but the publish lease wa
   const lock = fakeLock({ loseAt: 4 });
   const { publisher, stages, calls } = fakeAws(snapshot('41', tokenA), { publishLock: lock });
   const input = {
-    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing, artifactKeyRing: snapshot('0', tokenB).artifactKeyRing },
     expectedCurrentVersion: '41',
     clientRequestToken: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   };
@@ -268,7 +272,7 @@ test('reconciles a retry after PutSecretValue committed but the publish lease wa
 test('rejects a same-revision retry if the published credential material differs', async () => {
   const { publisher, calls } = fakeAws(snapshot('42', tokenA));
   await assert.rejects(publisher.publishCloudSecretSnapshot({
-    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing },
+    snapshot: { tokens: snapshot('0', tokenB).tokens, auditKeyRing: snapshot('0', tokenB).auditKeyRing, artifactKeyRing: snapshot('0', tokenB).artifactKeyRing },
     expectedCurrentVersion: '41',
   }), /already exists with different material/);
   assert.equal(calls.some(call => call.SecretString), false);
