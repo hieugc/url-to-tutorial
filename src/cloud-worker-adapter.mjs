@@ -90,7 +90,7 @@ const SAFE_CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
 export async function reconcileOrphanedCloudNetworks({
   dockerBin = 'docker',
   proxyContainer = 'url-tutorial-egress-proxy',
-  activeJobIds = [],
+  activeJobIds,
   runDockerImpl = runDocker,
 } = {}) {
   if (!SAFE_CONTAINER_NAME.test(proxyContainer)) {
