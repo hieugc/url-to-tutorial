@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createReplicaCertificateLifecycle } from '../src/cloud-certificate-lifecycle.mjs';
+import { createReplicaCertificateLifecycle, createStudioCertificateAuditRecorder } from '../src/cloud-certificate-lifecycle.mjs';
 
 const replicaId = 'api-a';
 const fingerprint = 'a'.repeat(64);
@@ -116,6 +116,36 @@ function createHarness({ failVerify = false, failRevoke = false, invalidCertific
   });
   return { service, calls, records, getActive: () => active };
 }
+
+test('certificate audit adapter writes only safe metadata to the signed platform chain', async () => {
+  const events = [];
+  const recorder = createStudioCertificateAuditRecorder({
+    store: { recordCloudAudit: event => events.push(structuredClone(event)) },
+  });
+  const bundleId = '123e4567-e89b-42d3-a456-426614174000';
+  await recorder.record({
+    action: 'cloud.certificate.activated',
+    actorId: 'operator-alpha',
+    replicaId: 'api-a',
+    bundleId,
+    fingerprint256: 'a'.repeat(64),
+  });
+  assert.deepEqual(events[0], {
+    tenantId: 'platform',
+    principalId: 'operator-alpha',
+    action: 'cloud.certificate.activated',
+    resourceId: 'api-a',
+    outcome: 'success',
+    details: { bundleId, fingerprint256: 'a'.repeat(64) },
+  });
+  await assert.rejects(recorder.record({
+    action: 'cloud.certificate.activated',
+    actorId: 'operator-alpha',
+    replicaId: 'api-a',
+    bundleId,
+    privateKey: 'must-not-be-accepted',
+  }), /audit event is invalid/i);
+});
 
 test('issues and activates a replica certificate only after CA verification and mTLS installation verification', async () => {
   const { service, calls, getActive } = createHarness();
