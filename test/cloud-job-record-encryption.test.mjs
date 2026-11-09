@@ -100,3 +100,30 @@ test('cloud startup can migrate legacy plaintext job rows by re-saving them', as
     assert.equal(JSON.stringify(raw).includes('private report payload'), false);
   } finally { migrated.close(); }
 });
+
+test('artifact encryption reconciles durable tenant storage and estimate-only usage with an audit event', async t => {
+  const root = await temp();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new StudioJobStore(root, {
+    artifactCipher: cipher,
+    auditKey: 'cloud-job-record-audit-signing-key-material-0123456789',
+  });
+  try {
+    const saved = job();
+    store.finalizeCloudUsage(saved, {
+      workerMs: 1000, artifactBytes: 100, costMicros: 21,
+      period: '2026-11', outcome: 'completed',
+    });
+    const changed = store.reconcileCloudArtifactBytes(saved, {
+      artifactBytes: 2 * 1024 * 1024,
+      workerCostPerSecondMicros: 20,
+      artifactCostPerMiBMicros: 10,
+    });
+    assert.equal(changed, true);
+    const usage = store.cloudUsage('tenant-private', '2026-11');
+    assert.equal(usage.artifactBytes, 2 * 1024 * 1024);
+    assert.equal(usage.storageBytes, 2 * 1024 * 1024);
+    assert.equal(usage.costMicros, 40);
+    assert.equal(store.cloudAuditEvents('tenant-private').at(-1).action, 'artifact.storage_reconciled');
+  } finally { store.close(); }
+});
