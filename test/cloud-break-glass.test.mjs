@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createBreakGlassRecovery } from '../src/cloud-break-glass.mjs';
+import { createBreakGlassRecovery, createStudioBreakGlassAuditRecorder, createTokenAdminBreakGlassExecutor } from '../src/cloud-break-glass.mjs';
 
 function createHarness({ failAction = false, failExecutionAudit = false } = {}) {
   const records = new Map();
@@ -81,6 +81,54 @@ function createHarness({ failAction = false, failExecutionAudit = false } = {}) 
   });
   return { service, records, audits, executions, authorizeCalls };
 }
+
+test('break-glass audit adapter appends only safe metadata to the signed platform chain', async () => {
+  const events = [];
+  const auditRecorder = createStudioBreakGlassAuditRecorder({
+    store: { recordCloudAudit: event => events.push(structuredClone(event)) },
+  });
+  const requestId = '123e4567-e89b-42d3-a456-426614174000';
+  await auditRecorder.record({
+    action: 'cloud.break_glass.execution_started',
+    actorId: 'operator-beta',
+    requestId,
+    actionType: 'revoke_token',
+    resourceId: 'service-a-current',
+    proposerId: 'operator-alpha',
+  });
+  assert.deepEqual(events[0], {
+    tenantId: 'platform',
+    principalId: 'operator-beta',
+    action: 'cloud.break_glass.execution_started',
+    resourceId: 'service-a-current',
+    outcome: 'success',
+    details: {
+      requestId,
+      actionType: 'revoke_token',
+      proposerId: 'operator-alpha',
+    },
+  });
+  await assert.rejects(auditRecorder.record({
+    action: 'cloud.break_glass.execution_started',
+    actorId: 'operator-beta',
+    requestId,
+    rawToken: 'must-not-be-accepted',
+  }), /audit event is invalid/i);
+});
+
+test('trusted break-glass executor exposes only token and principal revocation', async () => {
+  const calls = [];
+  const executor = createTokenAdminBreakGlassExecutor({
+    tokenAdmin: {
+      async revokeToken(id, options) { calls.push({ action: 'token', id, options }); return true; },
+      async revokePrincipal(id, options) { calls.push({ action: 'principal', id, options }); return 1; },
+    },
+  });
+  await executor.execute({ type: 'revoke_token', resourceId: 'token-12345678' }, { approverId: 'operator-beta' });
+  await executor.execute({ type: 'revoke_principal', resourceId: 'principal-12345678' }, { approverId: 'operator-beta' });
+  assert.deepEqual(calls.map(call => call.action), ['token', 'principal']);
+  await assert.rejects(executor.execute({ type: 'shell', resourceId: 'anything' }, { approverId: 'operator-beta' }), /unsupported/i);
+});
 
 test('break-glass requires two distinct MFA-verified operators and a one-time approver execution', async () => {
   const { service, records, audits, executions } = createHarness();
