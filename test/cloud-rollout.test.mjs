@@ -71,6 +71,11 @@ function createStore() {
       record.state = 'in_progress';
       return issueLease(input.rolloutId);
     },
+    async renewRollout(input) {
+      assertLease(input);
+      calls.push({ method: 'renewRollout', input });
+      return { renewed: true };
+    },
     async recordReplicaAck(input) {
       assertLease(input);
       calls.push({ method: 'recordReplicaAck', input });
@@ -265,6 +270,29 @@ test('resume refuses a provider that returns changed material for the pinned ver
     replicaDirectory: { list: async () => replicas }, rolloutStore: store,
     context: {}, rolloutId: first.rolloutId,
   }), /Pinned secret revision no longer matches/);
+});
+
+test('long-running replica reload renews its durable rollout lease', async () => {
+  const store = createStore();
+  store.renewIntervalMs = 5;
+  const operator = createOperatorAuthenticator();
+  const { replicas } = createReplicas(['api-a']);
+  const reload = replicas[0].reloadTokens.bind(replicas[0]);
+  replicas[0].reloadTokens = async (...args) => {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    return reload(...args);
+  };
+
+  const result = await runCloudCredentialRollout({
+    secretManager: { readCloudSecrets: async () => snapshot() },
+    operatorAuthenticator: operator,
+    replicaDirectory: { list: async () => replicas },
+    rolloutStore: store,
+    context: { session: 'mfa-verified' },
+  });
+
+  assert.equal(result.state, 'completed');
+  assert.ok(store.calls.filter(call => call.method === 'renewRollout').length >= 1);
 });
 
 test('rollout requires MFA and a signed per-replica assertion before any replica is changed', async () => {
