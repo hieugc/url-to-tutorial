@@ -771,7 +771,7 @@ export function createStudioServer({
         catch { return json(res, 404, { error: 'Subtitle file missing or unsafe' }); }
         return streamJobArtifact(res, opened, {
           'Content-Type': ext === 'srt' ? 'application/x-subrip; charset=utf-8' : 'text/vtt; charset=utf-8',
-          'Content-Length': opened.info.size,
+          'Content-Length': artifactByteLength(opened),
           'Content-Disposition': 'attachment; filename="tutorial.' + ext + '"',
           'Cache-Control': 'no-store',
         });
@@ -786,10 +786,10 @@ export function createStudioServer({
           return json(res, 404, { error: 'Screenshot not found' });
         }
         let opened;
-        try { opened = await openJobArtifact(outputRoot, job.id, 'discovery-page-' + index + '.png', 32 * 1024 * 1024); }
+        try { opened = await openStudioArtifact(artifactCipher, outputRoot, job.id, 'discovery-page-' + index + '.png', 32 * 1024 * 1024); }
         catch { return json(res, 404, { error: 'Screenshot missing or unsafe' }); }
         return streamJobArtifact(res, opened, { 'Content-Type': 'image/png',
-          'Content-Length': opened.info.size, 'Cache-Control': 'no-store' });
+          'Content-Length': artifactByteLength(opened), 'Cache-Control': 'no-store' });
       }
 
       const pricingImage = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/hostinger-screenshot$/i);
@@ -799,10 +799,10 @@ export function createStudioServer({
           return json(res, 404, { error: 'Hostinger pricing screenshot not found' });
         }
         let opened;
-        try { opened = await openJobArtifact(outputRoot, job.id, 'hostinger-pricing.png', 32 * 1024 * 1024); }
+        try { opened = await openStudioArtifact(artifactCipher, outputRoot, job.id, 'hostinger-pricing.png', 32 * 1024 * 1024); }
         catch { return json(res, 404, { error: 'Pricing screenshot missing or unsafe' }); }
         return streamJobArtifact(res, opened, { 'Content-Type': 'image/png',
-          'Content-Length': opened.info.size, 'Cache-Control': 'no-store' });
+          'Content-Length': artifactByteLength(opened), 'Cache-Control': 'no-store' });
       }
 
       const goalScreenshot = pathname.match(/^\/api\/jobs\/([a-f0-9-]{36})\/goal-screenshot$/i);
@@ -812,10 +812,10 @@ export function createStudioServer({
           return json(res, 404, { error: 'Goal screenshot not found' });
         }
         let opened;
-        try { opened = await openJobArtifact(outputRoot, job.id, 'discovery-page-1.png', 32 * 1024 * 1024); }
+        try { opened = await openStudioArtifact(artifactCipher, outputRoot, job.id, 'discovery-page-1.png', 32 * 1024 * 1024); }
         catch { return json(res, 404, { error: 'Goal screenshot missing or unsafe' }); }
         return streamJobArtifact(res, opened, { 'Content-Type': 'image/png',
-          'Content-Length': opened.info.size, 'Cache-Control': 'no-store' });
+          'Content-Length': artifactByteLength(opened), 'Cache-Control': 'no-store' });
       }
 
       if (req.method !== 'POST') return json(res, 404, { error: 'Unknown route' });
