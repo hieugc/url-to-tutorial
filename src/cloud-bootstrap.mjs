@@ -249,5 +249,8 @@ export async function createCloudStudioFromSecretManager({
     server: studio.server,
     status,
     reloadTokens,
+    // Narrow host-only capability: archive audit batches without exposing the
+    // raw auditAdmin, SQLite store, signing keys or token administration.
+    archiveAuditBatch: studio.auditAdmin.archiveBatch,
   });
 }
