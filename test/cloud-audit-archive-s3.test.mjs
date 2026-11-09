@@ -7,7 +7,7 @@ class GetObjectCommand { constructor(input) { this.input = input; } }
 class PutObjectCommand { constructor(input) { this.input = input; } }
 
 class FakeS3 {
-  constructor() { this.objects = new Map(); this.nextEtag = 1; }
+  constructor() { this.objects = new Map(); this.nextEtag = 1; this.putInputs = []; }
   async send(command) {
     const { Bucket, Key } = command.input;
     const id = Bucket + '/' + Key;
@@ -17,6 +17,7 @@ class FakeS3 {
       return { ETag: row.etag, Body: { async transformToString() { return row.body; } } };
     }
     if (command instanceof PutObjectCommand) {
+      this.putInputs.push(command.input);
       const current = this.objects.get(id);
       if (command.input.IfNoneMatch === '*' && current) {
         throw Object.assign(new Error('exists'), { name: 'PreconditionFailed' });
@@ -74,6 +75,10 @@ test('S3 audit archive appends immutable batch and advances checkpoint with exac
   assert.equal(client.objects.size, 2);
   const batchPut = [...client.objects.keys()].find(key => key.includes('/batches/'));
   assert.ok(batchPut);
+  const immutablePut = client.putInputs.find(input => input.Key.includes('/batches/'));
+  assert.equal(immutablePut.ServerSideEncryption, 'aws:kms');
+  assert.equal(immutablePut.ObjectLockMode, 'COMPLIANCE');
+  assert.ok(immutablePut.ObjectLockRetainUntilDate instanceof Date);
 
   const checkpoint = JSON.parse(client.objects.get(
     'audit-archive-test/cloud/audit/api-a/checkpoint.json',
