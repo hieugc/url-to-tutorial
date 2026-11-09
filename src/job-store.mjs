@@ -146,6 +146,12 @@ export class StudioJobStore {
     this.insertCloudStorageStatement = this.db.prepare(
       'INSERT INTO cloud_storage_usage (job_id, tenant_id, project_id, bytes, updated_at) VALUES (?, ?, ?, ?, ?) ' +
       'ON CONFLICT(job_id) DO UPDATE SET bytes=excluded.bytes, updated_at=excluded.updated_at');
+    this.cloudStorageUsageByJobStatement = this.db.prepare(
+      'SELECT bytes FROM cloud_storage_usage WHERE job_id=?');
+    this.cloudUsageForJobStatement = this.db.prepare(
+      'SELECT worker_ms AS workerMs FROM cloud_usage_events WHERE job_id=?');
+    this.updateCloudUsageArtifactBytesStatement = this.db.prepare(
+      'UPDATE cloud_usage_events SET artifact_bytes=?, cost_micros=?, finalized_at=? WHERE job_id=?');
     this.deleteCloudStorageReservationStatement = this.db.prepare(
       'DELETE FROM cloud_storage_reservations WHERE job_id=?');
     this.deleteCloudStorageUsageStatement = this.db.prepare(
@@ -304,6 +310,57 @@ export class StudioJobStore {
       artifactBytes: Number(usage.artifactBytes || 0), costMicros: Number(usage.costMicros || 0),
       storageBytes: Number(storage.used || 0), reservedStorageBytes: Number(storage.reserved || 0),
     };
+  }
+
+  reconcileCloudArtifactBytes(job, {
+    artifactBytes,
+    workerCostPerSecondMicros,
+    artifactCostPerMiBMicros,
+  } = {}) {
+    if (!job?.id || !job.tenantId || !job.projectId ||
+        !Number.isSafeInteger(artifactBytes) || artifactBytes < 0 ||
+        !Number.isSafeInteger(workerCostPerSecondMicros) || workerCostPerSecondMicros < 0 ||
+        !Number.isSafeInteger(artifactCostPerMiBMicros) || artifactCostPerMiBMicros < 0) {
+      throw new TypeError('Invalid cloud artifact storage reconciliation');
+    }
+    const usage = this.cloudUsageForJobStatement.get(job.id);
+    if (!usage) throw new Error('Cloud usage record is missing during artifact storage reconciliation');
+    const previous = this.cloudStorageUsageByJobStatement.get(job.id);
+    if (Number(previous?.bytes ?? -1) === artifactBytes) return false;
+    const workerMs = Number(usage.workerMs || 0);
+    const costMicros =
+      Math.ceil(workerMs / 1000) * workerCostPerSecondMicros +
+      Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
+    if (!Number.isSafeInteger(costMicros)) {
+      throw new Error('Reconciled cloud usage cost exceeds safe integer range');
+    }
+    const now = new Date().toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.insertCloudStorageStatement.run(
+        job.id, job.tenantId, job.projectId, artifactBytes, now,
+      );
+      const updated = this.updateCloudUsageArtifactBytesStatement.run(
+        artifactBytes, costMicros, now, job.id,
+      );
+      if (Number(updated.changes) !== 1) {
+        throw new Error('Cloud usage record changed during artifact storage reconciliation');
+      }
+      this.insertCloudAudit({
+        tenantId: job.tenantId,
+        projectId: job.projectId,
+        principalId: null,
+        action: 'artifact.storage_reconciled',
+        resourceId: job.id,
+        outcome: 'success',
+        details: { artifactBytes },
+      });
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   deleteCloudUsage(jobId) {
