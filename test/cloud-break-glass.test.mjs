@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createBreakGlassRecovery } from '../src/cloud-break-glass.mjs';
 
-function createHarness({ failAction = false } = {}) {
+function createHarness({ failAction = false, failExecutionAudit = false } = {}) {
   const records = new Map();
   const audits = [];
   const executions = [];
@@ -63,7 +63,12 @@ function createHarness({ failAction = false } = {}) {
       },
     },
     auditRecorder: {
-      async record(event) { audits.push(structuredClone(event)); },
+      async record(event) {
+        audits.push(structuredClone(event));
+        if (failExecutionAudit && event.action === 'cloud.break_glass.execution_started') {
+          throw new Error('private audit backend detail');
+        }
+      },
     },
     actionExecutor: {
       async execute(action) {
@@ -149,6 +154,23 @@ test('break-glass rejects missing MFA, malformed actions and short justification
     'urgent',
   ), /justification/i);
   assert.equal(records.size, 0);
+});
+
+test('break-glass does not execute an emergency action when the execution-start audit write fails', async () => {
+  const { service, records, executions } = createHarness({ failExecutionAudit: true });
+  const proposal = await service.propose(
+    { actorId: 'operator-alpha', mfaVerified: true },
+    { type: 'revoke_token', resourceId: 'service-a-current' },
+    'Emergency revocation after confirmed credential exposure',
+  );
+  await service.approve({ actorId: 'operator-beta', mfaVerified: true }, proposal.requestId);
+  await assert.rejects(service.execute(
+    { actorId: 'operator-beta', mfaVerified: true },
+    proposal.requestId,
+  ), /audit write failed/i);
+  assert.equal(executions.length, 0);
+  assert.equal(records.get(proposal.requestId).state, 'failed');
+  assert.equal(records.get(proposal.requestId).resultCode, 'AUDIT_WRITE_FAILED');
 });
 
 test('break-glass action failures are durably marked and expose only safe error codes', async () => {
