@@ -100,11 +100,14 @@ test('S3 audit archive refuses a batch that does not extend the external checkpo
   const client = new FakeS3();
   const sink = sinkFor(client);
   await sink.archiveBatch(batch());
-  await assert.rejects(sink.archiveBatch(batch({
+  const stale = batch({
     previousSequence: 1,
     previousHash: 'f'.repeat(64),
     sequences: [2],
-  })), /checkpoint does not match/i);
+  });
+  stale.events[0].eventHash = 'f'.repeat(64);
+  stale.throughHash = 'f'.repeat(64);
+  await assert.rejects(sink.archiveBatch(stale), /checkpoint does not match/i);
 });
 
 test('S3 audit archive rejects gaps and a mismatched final hash before writing', async () => {
