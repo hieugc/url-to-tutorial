@@ -108,7 +108,12 @@ export function createReplicaCertificateLifecycle({
     }
     const identity = await authorize(operatorAuthenticator, context,
       rotate ? 'cloud.certificates.rotate' : 'cloud.certificates.issue');
-    return publishLock.withLock('certificate:' + replicaId, async () => {
+    return publishLock.withLock('certificate:' + replicaId, async lease => {
+      if (!lease || typeof lease.assertHeld !== 'function') {
+        throw new TypeError('A fencing-aware certificate publish-lock lease is required');
+      }
+      const assertLockHeld = () => lease.assertHeld();
+      await assertLockHeld();
       const previous = await certificateStore.getActive(replicaId);
       if (!rotate && previous) throw new Error('Replica already has an active certificate; use rotate');
       if (rotate && !previous) throw new Error('Cannot rotate a replica without an active certificate');
@@ -128,6 +133,7 @@ export function createReplicaCertificateLifecycle({
           previousBundleId: previous?.bundleId ?? null,
         });
 
+        await assertLockHeld();
         keyMaterial = await keyProvider.createKeyAndCsr({
           replicaId,
           commonName: replicaId,
@@ -144,6 +150,7 @@ export function createReplicaCertificateLifecycle({
           });
         }
 
+        await assertLockHeld();
         issued = await certificateAuthority.issueCertificate({
           csrPem: keyMaterial.csrPem,
           replicaId,
@@ -194,6 +201,7 @@ export function createReplicaCertificateLifecycle({
           actorId: identity.actorId,
           previousBundleId: previous?.bundleId ?? null,
         };
+        await assertLockHeld();
         await certificateStore.stageCertificate(record);
         staged = true;
 
@@ -206,6 +214,7 @@ export function createReplicaCertificateLifecycle({
             code: 'REPLICA_CERTIFICATE_ADAPTER_INVALID',
           });
         }
+        await assertLockHeld();
         installed = true;
         await replica.installCertificate({
           bundleId,
@@ -233,11 +242,13 @@ export function createReplicaCertificateLifecycle({
           fingerprint256: metadata.fingerprint256,
           previousBundleId: previous?.bundleId ?? null,
         });
+        await assertLockHeld();
         await replica.activateCertificate({
           bundleId,
           previousBundleId: previous?.bundleId ?? null,
         });
         activationAttempted = true;
+        await assertLockHeld();
         await certificateStore.activateCertificate({
           replicaId,
           bundleId,
@@ -249,6 +260,7 @@ export function createReplicaCertificateLifecycle({
         let previousKeyCleanupPending = false;
         if (previous) {
           try {
+            await assertLockHeld();
             await certificateAuthority.revokeCertificate({
               serialNumber: previous.serialNumber,
               reason: 'superseded',
