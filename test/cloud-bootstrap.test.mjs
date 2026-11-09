@@ -46,6 +46,7 @@ function fakeFactory(calls = []) {
         },
       },
       auditAdmin: {
+        archiveBatch: async ({ limit = 500 } = {}) => ({ archived: 0, limit }),
         keyMetadata: () => ({
           activeKeyId: options.cloudAuditKeyRing.activeKeyId,
           keyIds: Object.keys(options.cloudAuditKeyRing.keys).sort(),
@@ -271,6 +272,27 @@ test('Cloud bootstrap integrates with the real Studio factory without exposing a
       await new Promise(resolve => cloud.server.close(resolve));
     }
   }
+});
+
+test('Cloud bootstrap exposes only the narrow audit archive capability for host scheduling', async () => {
+  const calls = [];
+  const bootstrap = await createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => snapshot('1') },
+    createStudioServerImpl: options => {
+      const studio = fakeFactory(calls)(options);
+      studio.auditAdmin.archiveBatch = async ({ limit = 500 } = {}) => {
+        calls.push({ archiveLimit: limit });
+        return { archived: 1, lastArchivedSequence: 1 };
+      };
+      return studio;
+    },
+  });
+  assert.equal(Object.hasOwn(bootstrap, 'auditAdmin'), false);
+  assert.equal(Object.hasOwn(bootstrap, 'tokenAdmin'), false);
+  assert.deepEqual(await bootstrap.archiveAuditBatch({ limit: 25 }), {
+    archived: 1, lastArchivedSequence: 1,
+  });
+  assert.deepEqual(calls.at(-1), { archiveLimit: 25 });
 });
 
 test('Cloud bootstrap exposes only the narrow audit archive capability for host scheduling', async () => {
