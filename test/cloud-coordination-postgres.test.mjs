@@ -94,10 +94,10 @@ test('expired publish lock can be reclaimed and stale fencing tokens are rejecte
   const pool = new FakePostgresPool();
   pool.failRenewals = true;
   const firstLock = createPostgresPublishLock({
-    pool, leaseMs: 100, renewIntervalMs: 20, retryIntervalMs: 2,
+    pool, leaseMs: 100, renewIntervalMs: 20, retryIntervalMs: 5,
   });
   const secondLock = createPostgresPublishLock({
-    pool, leaseMs: 1000, renewIntervalMs: 100, retryIntervalMs: 2,
+    pool, leaseMs: 1000, renewIntervalMs: 100, retryIntervalMs: 5,
   });
   const gate = deferred();
   let staleLease;
@@ -118,7 +118,7 @@ test('expired publish lock can be reclaimed and stale fencing tokens are rejecte
 test('publish lock renews a lease while its callback is still running', async () => {
   const pool = new FakePostgresPool();
   const lock = createPostgresPublishLock({
-    pool, leaseMs: 100, renewIntervalMs: 20, retryIntervalMs: 2,
+    pool, leaseMs: 100, renewIntervalMs: 20, retryIntervalMs: 5,
   });
   await lock.withLock('runtime', async lease => {
     await new Promise(resolve => setTimeout(resolve, 160));
