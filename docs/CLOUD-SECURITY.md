@@ -68,6 +68,28 @@ const published = await publisher.publishCloudSecretSnapshot({
 });
 ```
 
+### PostgreSQL distributed publish lock — implementation slice
+
+`src/cloud-coordination-postgres.mjs` provides `createPostgresPublishLock({ pool })` for the AWS Secrets Manager publisher's `publishLock.withLock(resource, callback)` contract. It uses one shared PostgreSQL table, an atomic upsert to acquire/reclaim an expired lease, a monotonically increasing fencing token, periodic lease renewal, and an ownership/expiry check through `lease.assertHeld()`. The adapter does not bundle a PostgreSQL driver; inject a trusted `pg.Pool` (or a compatible query-capable pool) from host code.
+
+Apply `migrations/001-cloud-coordination.sql` to the shared database before enabling the adapter. Every publisher host must use the same database and migration. Use a dedicated database role restricted to this table. Do not use an in-memory pool, per-host SQLite, or an unshared database. If PostgreSQL becomes unavailable or the lease is lost, publication fails closed. The callback must call `assertHeld()` immediately before irreversible external operations; a lease is not a substitute for AWS version checks or independent operational review.
+
+```js
+import pg from 'pg';
+import { createPostgresPublishLock } from '../src/cloud-coordination-postgres.mjs';
+import { createDefaultAwsSecretsManagerPublisher } from '../src/cloud-secrets-aws.mjs';
+
+const pool = new pg.Pool({ connectionString: process.env.COORDINATION_DATABASE_URL });
+const publishLock = createPostgresPublishLock({ pool });
+const publisher = await createDefaultAwsSecretsManagerPublisher({
+  region: 'ap-southeast-1',
+  secretId: 'tutorial/cloud/runtime',
+  publishLock,
+});
+```
+
+This is the shared publish-lock adapter only. It does not implement the durable rollout store, certificate issuance/rotation, break-glass recovery, vendor archive sink, or production deployment. Keep Cloud API disabled until all release gates are met and independently reviewed.
+
 - Use separate least-privilege roles: API runtime needs `secretsmanager:GetSecretValue` (and `kms:Decrypt` only when required by a customer-managed key); the publisher role additionally needs `secretsmanager:PutSecretValue` and only the required KMS encrypt/data-key permissions. Configure CloudTrail retention, alerting and IAM review in the AWS account; the adapter does not configure those controls.
 - `src/cloud-rollout.mjs` adds a host-side multi-replica rollout coordinator. It reads one immutable secret revision, computes a secret-free SHA-256 snapshot digest, fixes the replica inventory for that rollout, and asks each replica to reload that exact revision through its own secret-manager adapter. The coordinator never sends raw tokens or signing keys to replica RPC clients.
 - The operator authenticator must implement `createReplicaAssertion(identity, claims)` and return a short-lived signed assertion scoped to `action`, `rolloutId`, `targetVersion`, `replicaId` and `expiresAt`. Each replica must independently validate that assertion, require its own configured replica ID to equal the assertion audience, and match the `rolloutId` and `expectedVersion` request constraints before applying a reload. The internal replica transport must use mutually authenticated TLS; do not expose this RPC to tenants or the public internet.
