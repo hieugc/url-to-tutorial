@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createBreakGlassRecovery } from '../src/cloud-break-glass.mjs';
 
-function createHarness() {
+function createHarness({ failAction = false } = {}) {
   const records = new Map();
   const audits = [];
   const executions = [];
@@ -68,6 +68,7 @@ function createHarness() {
     actionExecutor: {
       async execute(action) {
         executions.push(structuredClone(action));
+        if (failAction) throw Object.assign(new Error('sensitive provider detail'), { code: 'ACTION_EXECUTION_FAILED' });
         return { applied: true };
       },
     },
@@ -151,8 +152,7 @@ test('break-glass rejects missing MFA, malformed actions and short justification
 });
 
 test('break-glass action failures are durably marked and expose only safe error codes', async () => {
-  const { service, records } = createHarness();
-  service.actionExecutor = undefined;
+  const { service, records } = createHarness({ failAction: true });
   const proposal = await service.propose(
     { actorId: 'operator-alpha', mfaVerified: true },
     { type: 'revoke_principal', resourceId: 'service-a' },
