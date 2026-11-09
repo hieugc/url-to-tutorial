@@ -11,6 +11,8 @@ import {
 const token = 'aws-secrets-manager-token-material-0123456789abcdef';
 const auditKey = 'aws-secrets-manager-audit-key-material-0123456789';
 const auditKeyId = createHash('sha256').update(auditKey).digest('hex').slice(0, 16);
+const artifactKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const artifactKeyId = createHash('sha256').update(Buffer.from(artifactKey, 'hex')).digest('hex').slice(0, 16);
 
 function bundle(revision = '42') {
   return {
@@ -24,6 +26,7 @@ function bundle(revision = '42') {
       projectIds: ['project-a'],
     }],
     auditKeyRing: { activeKeyId: auditKeyId, keys: { [auditKeyId]: auditKey } },
+    artifactKeyRing: { activeKeyId: artifactKeyId, keys: { [artifactKeyId]: artifactKey } },
   };
 }
 
@@ -57,6 +60,7 @@ test('maps latest AWS secret to AWSCURRENT and returns a validated cloud snapsho
   assert.equal(snapshot.version, '42');
   assert.equal(snapshot.tokens[0].tokenId, 'service-a-current');
   assert.equal(snapshot.auditKeyRing.activeKeyId, auditKeyId);
+  assert.equal(snapshot.artifactKeyRing.activeKeyId, artifactKeyId);
 });
 
 test('maps a pinned decimal revision to its immutable custom AWS version stage', async () => {
@@ -115,6 +119,12 @@ test('rejects unsupported schema, extra fields and invalid secret revisions', as
     ['missing active audit key', {
       ...bundle(), auditKeyRing: { activeKeyId: '0000000000000000', keys: { [auditKeyId]: auditKey } },
     }, /missing its active audit key/],
+    ['invalid artifact key fingerprint', {
+      ...bundle(), artifactKeyRing: { activeKeyId: '0000000000000000', keys: { '0000000000000000': artifactKey } },
+    }, /artifact encryption key fingerprint/],
+    ['missing active artifact key', {
+      ...bundle(), artifactKeyRing: { activeKeyId: '0000000000000000', keys: { [artifactKeyId]: artifactKey } },
+    }, /missing its active artifact encryption key/],
     ['invalid bearer token', {
       ...bundle(), tokens: [{ ...bundle().tokens[0], token: 'short' }],
     }, /invalid bearer-token registry/],
