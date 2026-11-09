@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { constants as fsConstants, rmSync, readdirSync, lstatSync } from 'node:fs';
+import { constants as fsConstants, rmSync } from 'node:fs';
 import { mkdir, readFile, lstat, open, readdir } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -145,24 +145,6 @@ async function readJobJson(outputRoot, jobId, filename, maxBytes = 2 * 1024 * 10
     if (bytesRead > maxBytes) throw new Error('Job report exceeds its size limit');
     return JSON.parse(buffer.subarray(0, bytesRead).toString('utf8'));
   } finally { await handle.close(); }
-}
-
-function directoryBytesSync(root) {
-  const pending = [root];
-  let total = 0;
-  while (pending.length) {
-    const directory = pending.pop();
-    let entries;
-    try { entries = readdirSync(directory); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-    for (const name of entries) {
-      const file = path.join(directory, name);
-      const info = lstatSync(file);
-      if (info.isDirectory() && !info.isSymbolicLink()) pending.push(file);
-      else total += info.size;
-    }
-  }
-  return total;
 }
 
 async function directoryBytes(root) {
