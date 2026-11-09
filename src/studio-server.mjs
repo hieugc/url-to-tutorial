@@ -14,6 +14,7 @@ import { renderNarrated } from './narration.mjs';
 import { StudioJobStore } from './job-store.mjs';
 import { createCloudAuth } from './cloud-auth.mjs';
 import { publicUrlPreflight } from './cloud-egress.mjs';
+import { createCloudArtifactCipher } from './cloud-artifact-crypto.mjs';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'studio');
 const assets = new Map([
@@ -221,6 +222,7 @@ export function createStudioServer({
   cloudPricing = {},
   cloudAuditArchive = null,
   cloudAuditKeyRing = null,
+  cloudArtifactKeyRing = null,
 } = {}) {
   const allowedCloudHosts = new Set(cloudAllowedHosts.map(host => String(host).trim().toLowerCase()));
   if (cloudMode && (!allowedCloudHosts.size ||
@@ -243,6 +245,9 @@ export function createStudioServer({
   if (cloudMode && cloudAuditKeyRing !== null && cloudAuditKey !== null) {
     throw new TypeError('Configure cloudAuditKey or cloudAuditKeyRing, not both');
   }
+  if (cloudMode && cloudArtifactKeyRing === null) {
+    throw new TypeError('Cloud mode requires a versioned artifact encryption key ring');
+  }
   const maxStorageBytesPerTenant = positiveCloudLimit(
     cloudLimits.maxStorageBytesPerTenant, 5 * 1024 * 1024 * 1024, 'maxStorageBytesPerTenant');
   const maxOutputBytesPerJob = positiveCloudLimit(
@@ -259,31 +264,69 @@ export function createStudioServer({
     throw new TypeError('cloudAuditArchive must be a trusted append-only archive function');
   }
   const cloudAuth = cloudMode ? createCloudAuth({ tokens: cloudTokens, limits: cloudLimits }) : null;
+  const artifactCipher = cloudMode
+    ? createCloudArtifactCipher({ keyRing: cloudArtifactKeyRing })
+    : null;
   const store = new StudioJobStore(outputRoot, cloudMode
-    ? (cloudAuditKeyRing ? { auditKeyRing: cloudAuditKeyRing } : { auditKey: cloudAuditKey })
+    ? {
+      ...(cloudAuditKeyRing ? { auditKeyRing: cloudAuditKeyRing } : { auditKey: cloudAuditKey }),
+      artifactCipher,
+    }
     : {});
   if (cloudMode) {
     store.pruneCloudSubmissions(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
   }
   const recoveredJobs = store.recover();
   const jobs = new Map(recoveredJobs.map(job => [job.id, job]));
-  if (cloudMode) {
-    for (const job of recoveredJobs) {
-      if (!job.tenantId || !job.projectId || store.hasCloudUsage(job.id)) continue;
-      const artifactBytes = directoryBytesSync(job.outputDir);
-      const workerMs = job.startedAt
-        ? Math.max(0, Date.parse(job.finishedAt || new Date().toISOString()) - Date.parse(job.startedAt))
-        : 0;
-      const period = new Date(job.createdAt).toISOString().slice(0, 7);
-      const costMicros =
-        Math.ceil(workerMs / 1000) * workerCostPerSecondMicros +
-        Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
-      store.finalizeCloudUsage(job, { workerMs, artifactBytes, costMicros, period, outcome: 'interrupted' }, {
-        tenantId: job.tenantId, projectId: job.projectId, action: 'job.interrupted_recovered',
-        resourceId: job.id, outcome: 'failed', details: { workerMs, artifactBytes, costMicros },
-      });
+  async function protectCloudArtifacts() {
+    if (!cloudMode) return Object.freeze({ jobs: 0, files: 0, encryptedBytes: 0 });
+    let files = 0;
+    let encryptedBytes = 0;
+    for (const job of jobs.values()) {
+      if (!/^[a-f0-9-]{36}$/i.test(job.id)) {
+        throw new Error('Persisted cloud job has an invalid artifact identity');
+      }
+      // Never trust outputDir from the persisted job snapshot. The UUID is the
+      // only input used to derive the tenant-scoped artifact directory.
+      job.outputDir = path.join(path.resolve(outputRoot), job.id);
+      const protectedFiles = await artifactCipher.encryptDirectory(outputRoot, job.id);
+      files += protectedFiles.files;
+      encryptedBytes += protectedFiles.encryptedBytes;
+      if (job.tenantId && job.projectId) {
+        const artifactBytes = await directoryBytes(job.outputDir);
+        if (store.hasCloudUsage(job.id)) {
+          store.reconcileCloudArtifactBytes(job, {
+            artifactBytes, workerCostPerSecondMicros, artifactCostPerMiBMicros,
+          });
+        } else {
+          const workerMs = job.startedAt
+            ? Math.max(0, Date.parse(job.finishedAt || new Date().toISOString()) - Date.parse(job.startedAt))
+            : 0;
+          const period = new Date(job.createdAt).toISOString().slice(0, 7);
+          const costMicros =
+            Math.ceil(workerMs / 1000) * workerCostPerSecondMicros +
+            Math.ceil(artifactBytes / (1024 * 1024)) * artifactCostPerMiBMicros;
+          if (!Number.isSafeInteger(costMicros)) {
+            throw new Error('Recovered cloud usage cost exceeds safe integer range');
+          }
+          store.finalizeCloudUsage(job, {
+            workerMs, artifactBytes, costMicros, period, outcome: job.status,
+          }, {
+            tenantId: job.tenantId, projectId: job.projectId,
+            action: job.status === 'interrupted' ? 'job.interrupted_recovered' : 'job.usage_recovered',
+            resourceId: job.id,
+            outcome: job.status === 'completed' ? 'success' : 'failed',
+            details: { workerMs, artifactBytes, costMicros },
+          });
+        }
+      }
+      // Re-save every record to migrate legacy plaintext snapshots into the
+      // authenticated encrypted SQLite envelope before accepting cloud traffic.
+      store.save(job);
     }
+    return Object.freeze({ jobs: jobs.size, files, encryptedBytes });
   }
+
   function pruneHistory() {
     const expiredIds = store.expired().map(job => job.id);
     for (const id of expiredIds) store.delete(id);
