@@ -53,6 +53,8 @@ export function createS3AuditArchiveSink({
   bucket,
   prefix = 'url-to-tutorial/audit',
   replicaId,
+  kmsKeyId,
+  retentionDays = 365,
   commands,
   now = () => new Date().toISOString(),
 } = {}) {
@@ -72,6 +74,12 @@ export function createS3AuditArchiveSink({
       !/^[A-Za-z0-9][A-Za-z0-9_.!*/-]*$/.test(prefix)) {
     throw new TypeError('A valid S3 audit archive prefix is required');
   }
+  if (typeof kmsKeyId !== 'string' || !kmsKeyId.trim() || kmsKeyId.length > 2048) {
+    throw new TypeError('An AWS KMS key ID or ARN is required for audit archive encryption');
+  }
+  if (!Number.isSafeInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
+    throw new TypeError('Audit archive retentionDays must be between 1 and 3650');
+  }
   if (typeof now !== 'function') throw new TypeError('Audit archive clock must be a function');
 
   const root = [prefix.replace(/\/+$/, ''), replicaId].filter(Boolean).join('/');
@@ -87,10 +95,12 @@ export function createS3AuditArchiveSink({
     }
   }
 
-  async function putImmutable(key, body) {
+  async function putImmutable(key, body, retainUntil) {
     try {
       await client.send(new commands.PutObjectCommand({
         Bucket: bucket, Key: key, Body: body, ContentType: 'application/json',
+        ServerSideEncryption: 'aws:kms', SSEKMSKeyId: kmsKeyId, BucketKeyEnabled: true,
+        ObjectLockMode: 'COMPLIANCE', ObjectLockRetainUntilDate: retainUntil,
         IfNoneMatch: '*',
       }));
       return;
@@ -137,7 +147,11 @@ export function createS3AuditArchiveSink({
       throughHash: batch.throughHash,
       events: batch.events,
     });
-    await putImmutable(batchKey, batchBody);
+    const archivedAt = now();
+    const archivedAtMs = Date.parse(archivedAt);
+    if (!Number.isFinite(archivedAtMs)) throw new Error('Audit archive clock returned an invalid timestamp');
+    const retainUntil = new Date(archivedAtMs + retentionDays * 24 * 60 * 60_000);
+    await putImmutable(batchKey, batchBody, retainUntil);
 
     const nextCheckpoint = JSON.stringify({
       schemaVersion: 1,
@@ -145,13 +159,14 @@ export function createS3AuditArchiveSink({
       throughSequence: batch.throughSequence,
       throughHash: batch.throughHash,
       batchKey,
-      archivedAt: now(),
+      archivedAt,
     });
     const input = {
       Bucket: bucket,
       Key: checkpointKey,
       Body: nextCheckpoint,
       ContentType: 'application/json',
+      ServerSideEncryption: 'aws:kms', SSEKMSKeyId: kmsKeyId, BucketKeyEnabled: true,
       ...(checkpointObject ? { IfMatch: checkpointObject.etag } : { IfNoneMatch: '*' }),
     };
     try {
