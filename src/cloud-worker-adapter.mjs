@@ -264,6 +264,7 @@ export function createDockerWorkerAdapter({
   timeoutMs = 600000,
   maxOutputBytes = 1024 * 1024 * 1024,
   outputCheckIntervalMs = 1000,
+  runDockerImpl = runDocker,
 } = {}) {
   validateImage(image);
   if (typeof process.getuid !== 'function' || typeof process.getgid !== 'function' ||
@@ -281,6 +282,7 @@ export function createDockerWorkerAdapter({
       outputCheckIntervalMs > 10000) {
     throw new TypeError('Invalid cloud worker output size monitor limits');
   }
+  if (typeof runDockerImpl !== 'function') throw new TypeError('runDockerImpl must be a function');
   const rootPath = path.resolve(allowedOutputRoot);
 
   async function safeDocker(args) {
@@ -298,7 +300,7 @@ export function createDockerWorkerAdapter({
     }
   }
 
-  return async function runIsolatedCloudJob(job) {
+  const runIsolatedCloudJob = async function runIsolatedCloudJob(job) {
     if (!job || !UUID.test(job.jobId || '') ||
         !/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/.test(job.tenantId || '') ||
         !/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/.test(job.projectId || '') ||
@@ -444,4 +446,9 @@ export function createDockerWorkerAdapter({
       }
     }
   };
+  runIsolatedCloudJob.reconcileOrphanedNetworks = ({ activeJobIds } = {}) =>
+    reconcileOrphanedCloudNetworks({
+      dockerBin, proxyContainer, activeJobIds, runDockerImpl,
+    });
+  return runIsolatedCloudJob;
 }
