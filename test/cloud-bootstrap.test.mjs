@@ -387,3 +387,30 @@ test('Cloud bootstrap reconciles Docker networks after persisted jobs are recove
 
   assert.deepEqual(recoveredIds, [activeId]);
 });
+
+test('Cloud bootstrap fails closed when Docker network reconciliation reports a failed network', async () => {
+  let closed = false;
+  const worker = async () => ({ status: 'unused' });
+  worker.reconcileOrphanedNetworks = async () => ({
+    scanned: 1, removed: [], skipped: [], failed: [
+      { network: 'utv-job-11111111-1111-4111-8111-111111111111', reason: 'docker-reconciliation-failed' },
+    ],
+  });
+  const studio = {
+    server: { close() {} },
+    jobs: new Map(),
+    store: { close() { closed = true; } },
+    tokenAdmin: { list: () => [{ tokenId: 'service-a-current' }] },
+    auditAdmin: { keyMetadata: () => ({ activeKeyId: auditKeyId, keyIds: [auditKeyId] }) },
+  };
+  await assert.rejects(createCloudStudioFromSecretManager({
+    secretManager: { readCloudSecrets: async () => snapshot('1') },
+    serverOptions: {
+      cloudAllowedHosts: ['api.example.test'],
+      cloudTrustedProxy: true,
+      cloudWorker: worker,
+    },
+    createStudioServerImpl: () => studio,
+  }), /Cloud Docker network recovery failed/);
+  assert.equal(closed, true);
+});
