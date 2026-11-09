@@ -185,8 +185,7 @@ export async function createCloudStudioFromSecretManager({
     // HTTP server is returned to its caller and can accept tenant requests.
     await studio.protectCloudArtifacts();
   } catch {
-    studio.store?.close?.();
-    studio.server?.close?.();
+    try { studio.store?.close?.(); } catch {}
     throw new Error('Cloud artifact protection failed; refusing to start the Cloud API');
   }
 
