@@ -153,7 +153,7 @@ test('retries idempotently when the exact next revision was already published', 
   const { publisher, calls } = fakeAws();
   const next = snapshot('0', tokenB);
   const input = {
-    snapshot: { tokens: next.tokens, auditKeyRing: next.auditKeyRing },
+    snapshot: { tokens: next.tokens, auditKeyRing: next.auditKeyRing, artifactKeyRing: next.artifactKeyRing },
     expectedCurrentVersion: '41',
     clientRequestToken: '0123456789abcdef0123456789abcdef',
   };
