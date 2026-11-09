@@ -6,7 +6,7 @@ const replicaId = 'api-a';
 const fingerprint = 'a'.repeat(64);
 const now = Date.parse('2026-11-09T10:00:00.000Z');
 
-function createHarness({ failVerify = false, failRevoke = false, invalidCertificate = false } = {}) {
+function createHarness({ failVerify = false, failRevoke = false, invalidCertificate = false, failLockAssertion = false } = {}) {
   const calls = [];
   const records = new Map();
   let active = null;
@@ -107,7 +107,7 @@ function createHarness({ failVerify = false, failRevoke = false, invalidCertific
         calls.push({ method: 'withLock', resource });
         if (lockHeld) throw new Error('lock overlap');
         lockHeld = true;
-        try { return await callback(); } finally { lockHeld = false; }
+        try { return await callback({ async assertHeld() { calls.push({ method: 'assertLockHeld' }); if (failLockAssertion) throw new Error('lock lease lost'); } }); } finally { lockHeld = false; }
       },
     },
     auditRecorder: { async record(event) { calls.push({ method: 'audit', event }); } },
@@ -218,6 +218,15 @@ test('requires MFA before key generation and serializes issue/rotation by replic
   assert.equal(calls.some(c => c.method === 'createKeyAndCsr'), false);
   await service.issue({ actorId: 'operator-alpha', mfaVerified: true }, replicaId);
   assert.ok(calls.some(c => c.method === 'withLock' && c.resource === 'certificate:api-a'));
+});
+
+test('fails closed before key generation when the distributed certificate lock lease is lost', async () => {
+  const { service, calls } = createHarness({ failLockAssertion: true });
+  await assert.rejects(service.issue(
+    { actorId: 'operator-alpha', mfaVerified: true }, replicaId,
+  ), /lock lease lost/i);
+  assert.equal(calls.some(c => c.method === 'createKeyAndCsr'), false);
+  assert.equal(calls.some(c => c.method === 'activateReplicaCertificate'), false);
 });
 
 test('reports previous certificate revocation as pending without rolling back the verified replacement', async () => {
