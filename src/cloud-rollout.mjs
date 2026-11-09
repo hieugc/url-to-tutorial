@@ -322,6 +322,7 @@ export async function runCloudCredentialRollout({
   const failures = [];
   let leaseLost = false;
   let renewalInFlight = Promise.resolve();
+  let renewalRunning = false;
   let renewalTimer;
   const assertLeaseAvailable = () => {
     if (leaseLost) {
@@ -334,6 +335,8 @@ export async function runCloudCredentialRollout({
     const renewIntervalMs = Number.isSafeInteger(rolloutStore.renewIntervalMs)
       ? rolloutStore.renewIntervalMs : 30_000;
     renewalTimer = setInterval(() => {
+      if (renewalRunning) return;
+      renewalRunning = true;
       renewalInFlight = rolloutStore.renewRollout({
         rolloutId: id,
         leaseToken,
@@ -341,6 +344,8 @@ export async function runCloudCredentialRollout({
         if (!result || result.renewed !== true) leaseLost = true;
       }).catch(() => {
         leaseLost = true;
+      }).finally(() => {
+        renewalRunning = false;
       });
     }, renewIntervalMs);
     renewalTimer.unref?.();
