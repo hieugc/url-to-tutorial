@@ -12,7 +12,7 @@ permissions:
   contents: read
 jobs:
   verify:
-    runs-on: [ubuntu-latest, self-hosted]
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -21,8 +21,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng xvfb
+      - run: npx playwright install chromium
+      - run: brew install ffmpeg espeak-ng
       - run: npm test
       - run: npm run test:cloud:docker
       - run: npm run test:e2e
@@ -31,7 +31,7 @@ jobs:
       - run: npm run test:goal:e2e
       - run: npm run test:narration:e2e
       - run: npm run test:privacy:e2e
-      - run: xvfb-run -a npm run test:iframe-session:e2e
+      - run: npm run test:iframe-session:e2e
       - run: npm run test:discovery-public:e2e
       - run: npm run benchmark -- output/e2e-demo/tutorial.mp4
       - run: npm run test:webreel:e2e
@@ -43,21 +43,8 @@ jobs:
           retention-days: 7
 
   postgres-coordination:
-    runs-on: [ubuntu-latest, self-hosted]
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: tutorial-test
-          POSTGRES_DB: tutorial_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d tutorial_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -66,13 +53,28 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm install --no-save --package-lock=false pg@8.16.3
+      - name: Start isolated PostgreSQL for integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --rm --name tutorial-ci-postgres --env POSTGRES_PASSWORD=tutorial-test --env POSTGRES_DB=tutorial_test --publish 54329:5432 postgres:16-alpine
+          for attempt in {1..30}; do
+            if docker exec tutorial-ci-postgres pg_isready -U postgres -d tutorial_test; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec tutorial-ci-postgres pg_isready -U postgres -d tutorial_test
       - name: Verify distributed publish-lock semantics against PostgreSQL
         run: node --test test/cloud-coordination-postgres.integration.test.mjs test/cloud-rollout-postgres.integration.test.mjs test/cloud-break-glass-postgres.integration.test.mjs test/cloud-certificate-postgres.integration.test.mjs
         env:
-          COORDINATION_DATABASE_URL: postgres://postgres:tutorial-test@localhost:5432/tutorial_test
+          COORDINATION_DATABASE_URL: postgres://postgres:tutorial-test@localhost:54329/tutorial_test
+      - name: Stop PostgreSQL container
+        if: always()
+        run: docker stop tutorial-ci-postgres || true
 
   macos-regression:
-    runs-on: [macos-15, self-hosted]
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -91,7 +93,7 @@ jobs:
       - run: npm run test:goal:e2e
       - run: npm run test:narration:e2e
       - run: npm run test:privacy:e2e
-      - run: SKIP_HEADED_SESSION=1 npm run test:iframe-session:e2e
+      - run: npm run test:iframe-session:e2e
       - run: npm run test:discovery-public:e2e
       - run: npm run benchmark -- output/e2e-demo/tutorial.mp4
       - uses: actions/upload-artifact@v4
@@ -102,12 +104,10 @@ jobs:
           retention-days: 7
 
   consolidate-audited-branches:
-    # Audit + Linux CI must pass before pruning already-merged branch refs.
-    # macOS regression remains independent and is still required for quality acceptance;
-    # unavailable macOS runner capacity must not block safe ref-only housekeeping.
+    # Audit + CI must pass before pruning already-merged branch refs.
     needs: [verify]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.verify.result == 'success'
-    runs-on: [ubuntu-latest, self-hosted]
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 5
     permissions:
       contents: write

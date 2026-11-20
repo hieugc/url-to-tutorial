@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   pricing:
-    runs-on: [ubuntu-latest, self-hosted]
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -21,8 +21,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npx playwright install chromium
+      - run: brew install ffmpeg
       - name: Read live Hostinger VN pricing without clicking
         run: npm run tutorial -- hostinger 'https://www.hostinger.com/vn#pricing' --out output/hostinger-live
       - name: Validate observed plan
