@@ -67,7 +67,7 @@ const { server } = createStudioServer({
     if (!preview) await writeFile(path.join(outDir, 'tutorial.mp4'), Buffer.from('test fixture video'));
     return { status: 'completed', steps: [{ id: 'intro', status: 'completed' }],
       ...(!preview ? { video: { path: path.join(outDir, 'tutorial.mp4'),
-        width: 1280, height: 720, codec: 'h264', duration: 2 } } : {}) };
+        width: 1280, height: 720, codec: 'h264', duration: 2, audio: false } } : {}) };
   },
 });
 await mkdir(root, { recursive: true });
@@ -113,6 +113,9 @@ try {
   await downloadButton.click();
   const download = await downloadPromise;
   assert.equal(download.suggestedFilename(), 'tutorial.mp4');
+  assert.equal(await page.locator('#video-codec').textContent(), 'h264');
+  assert.equal(await page.locator('#video-audio').textContent(), 'None');
+  assert.equal(await page.locator('#video-metadata').isVisible(), true);
   await page.getByLabel('Website URL').fill('https://www.hostinger.com/vn#pricing');
   await page.getByRole('button', { name: /Create Hostinger pricing guide/ }).click();
   await page.getByText('Tìm hiểu gói Premium', { exact: true }).waitFor();

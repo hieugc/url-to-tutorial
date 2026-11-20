@@ -368,6 +368,9 @@ function showJob(title, detail) {
   $('download').hidden = true;
   $('srt-download').hidden = true;
   $('vtt-download').hidden = true;
+  $('video-metadata').hidden = true;
+  $('video-codec').textContent = '';
+  $('video-audio').textContent = '';
   $('cancel-job').hidden = !state.activeJobId;
 }
 async function awaitJob(jobId, title) {
@@ -629,7 +632,14 @@ async function execute(type) {
     });
     const result = await awaitJob(job.jobId, type === 'render' ? 'Rendering MP4' : 'Previewing walkthrough');
     showJob(type === 'render' ? 'MP4 ready' : 'Preview finished',
-      result.report?.video ? Math.round(result.report.video.duration) + 's · H.264 · no audio' : 'Completed');
+      result.report?.video ? Math.round(result.report.video.duration) + 's' : 'Completed');
+    if (type === 'render' && result.report?.video) {
+      $('video-codec').textContent = result.report.video.codec || 'Unknown';
+      $('video-audio').textContent = result.report.video.audio
+        ? (result.report.video.audioCodec || 'Present')
+        : 'None';
+      $('video-metadata').hidden = false;
+    }
     if (result.videoUrl) {
       $('download').href = result.videoUrl;
       $('download').hidden = false;
