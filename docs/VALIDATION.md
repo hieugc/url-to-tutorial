@@ -206,13 +206,13 @@ Environment: macOS arm64, Node.js **22.23.5** (explicit nvm PATH; default Node 2
 | UTV-004 | PARTIAL | Goal E2E and existing mocked/offline evidence; live authorized model key and privacy/relevance review absent. |
 | UTV-005 | PARTIAL | Unit suite and local narration E2E PASS for VI/EN AAC + SRT/VTT; human listening/A-V sync on M3 open. |
 | UTV-006 | PARTIAL | Webreel A/B E2E passes with disclosed compatibility patch; human visual/M3 benchmark open. |
-| UTV-007 | PARTIAL | Persistence unit coverage passes within suite; PostgreSQL integrations pass; full process/M3 acceptance and current CI pending. |
+| UTV-007 | PARTIAL | Persistence unit coverage passes within suite; PostgreSQL integrations pass; full process/M3 acceptance and exact-HEAD CI run 44694492183 passed; M3 acceptance remains open. |
 | UTV-008 | PARTIAL | Privacy, iframe/session and MFA E2E pass; authenticated real-site/M3 review open. |
 | UTV-009 | BLOCKED | Encryption branch test failures/timeout; Docker helper and staging/security gates unresolved; not merged or enabled. |
 | UTV-010 | PARTIAL | Discovery-public E2E pass; real-site breadth and human evidence review open. |
 | UTV-011 | PARTIAL | Both branch outcomes and continuous multipage H.264 E2E pass; human visual transition/M3 review open. |
 
-GitHub Issues #3–#13 remain OPEN; no issue was closed based on incomplete acceptance. Studio metadata change was committed and pushed to `main` as `7ddd20e0b9e6048211b4a0739999a23a4f290e97`. Its earlier run was cancelled; the successful workflow run 44671762184 is attached to the later self-hosted CI configuration commit `3e06d0a`, not the Studio SHA. Current local diffs need their own successful workflow before claiming CI proof.
+GitHub Issues #3–#13 remain OPEN; no issue was closed based on incomplete acceptance. Studio metadata change was committed and pushed to `main` as `7ddd20e0b9e6048211b4a0739999a23a4f290e97`. Its earlier run was cancelled; later self-hosted regression run 44694492183 passed at `8faa984`, covering the current mainline Studio behavior.
 
 
 ## Self-hosted runner conversion (2026-11-20)
@@ -226,3 +226,19 @@ GitHub Issues #3–#13 remain OPEN; no issue was closed based on incomplete acce
 - Rechecked locally on Node 22.23.5: `npm test` **174 passed, 0 failed, 4 PostgreSQL skipped** (dedicated PostgreSQL CI job passed); general E2E, Studio, Hostinger, goal, privacy, iframe/session (4/4), discovery-public and Webreel A/B passed.
 - First local narration E2E attempt encountered the renderer's safe no-overwrite guard because `output/e2e-narration/{vi,en}` already contained prior MP4s. Updated the harness to use `output/e2e-narration-<UUID>/{vi,en}`; subsequent VI and EN narration E2E passed with AAC, SRT/VTT and measured clip timing. This follow-up local test edit is not included in CI run 44677496161 and still needs its own CI run after commit.
 - The local `test:cloud:docker` helper remains unavailable because Docker config references missing `docker-credential-desktop`; CI cloud Docker E2E passed. Do not confuse this host tooling limitation with the CI result.
+
+
+## Exact-HEAD self-hosted CI verification (2026-11-20)
+
+- Reran GitHub Actions run [44694492183](https://github.com/hieugc/url-to-tutorial/actions/runs/44694492183) for exact `main` HEAD `8faa984137005114c41e2f4a12b96fa1e1c45805`; final conclusion: **SUCCESS**.
+- All four jobs passed: `verify` (unit tests, cloud Docker E2E, general/Studio/Hostinger/goal/narration/privacy/iframe/discovery-public/Webreel E2E and artifact upload), PostgreSQL coordination (integration test plus isolated PostgreSQL startup/cleanup), `macos-regression`, and audited branch consolidation.
+- This run includes the committed UUID-isolated narration E2E harness at `8faa984`; Vietnamese and English narration E2E also passed locally with H.264/AAC and SRT/VTT.
+- Mainline source checkout at exact HEAD `8faa984` is aligned with `origin/main`; this validation/report update is an uncommitted documentation change. `git diff --check` and YAML parsing pass. Local `npm test`: 174 passed, 0 failed, 4 PostgreSQL tests skipped by the generic runner; the dedicated PostgreSQL CI job passed.
+- Human MacBook M3 visual/audio/performance review, live authorized AI usage, authenticated real-site review, and independent UTV-009 security/staging acceptance remain external gates. UTV-009 remains disabled/not deployed.
+
+
+## UTV-009 encryption branch recheck (2026-11-20)
+
+- Remote branch `origin/feat/utv-009-cloud-artifact-encryption` remains at `b4b8c0d8fc5d71c1de8c172c804d902aebc67197`; no PR is open and its GitHub Actions runs are cancelled. The existing detached worktree remains separate from main; no implementation changes were retained there.
+- Node 22 focused reruns reproduced the restart defects: request-rate persistence expected 429 but received 503; daily quota submission expected 202 but received 503. The latter was traced to its test fixture listening directly on `server` rather than the Studio object that runs `protectCloudArtifacts()`; a temporary fixture correction passed, then was reverted rather than retained without a full branch test run. Monthly usage and storage-budget worker fixtures still end `failed` instead of `completed`; a minimal independent worker reproduction completed, so those failures remain fixture/policy unresolved. The earlier batch timed out after reporting four failures.
+- Do not merge or deploy this branch. Mainline exact-HEAD CI run 44694492183 remains SUCCESS; its cloud Docker test does not validate this encryption branch. UTV-009 remains BLOCKED and Cloud API remains disabled pending a complete branch test pass, deployment evidence and independent security acceptance.

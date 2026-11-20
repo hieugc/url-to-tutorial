@@ -74,3 +74,17 @@ Trong lượt này các output E2E được chuyển sang UUID-unique để trá
 - CI 44677496161: all jobs SUCCESS on main SHA `104865936147c8cb0d6dd774f69e8959079d4658`; includes `npm test`, all configured E2E suites, Docker cloud E2E, macOS regression and PostgreSQL job.
 - Follow-up local run on Node 22.23.5 found narration E2E output-directory reuse; updated `test/narration.e2e.mjs` to use a UUID-isolated root and reran it successfully for VI/EN. Privacy, iframe/session, discovery-public and Webreel A/B also passed afterward. This local harness-only edit is not yet covered by CI.
 - `npm test` on this checkout: 174 passed, 0 failed, 4 PostgreSQL skips (dedicated CI PostgreSQL job passed). Issues #3–#13 remain open; human M3/visual/audio, live authorized AI, authenticated-site and independent cloud security/staging acceptance have not been fabricated. UTV-009 stays BLOCKED and Cloud API remains disabled.
+
+
+## Exact-HEAD CI follow-up (2026-11-20)
+
+- Reran CI for `8faa984137005114c41e2f4a12b96fa1e1c45805`; run [44694492183](https://github.com/hieugc/url-to-tutorial/actions/runs/44694492183) completed **SUCCESS** across verify, PostgreSQL coordination, macOS regression and gated consolidation.
+- Verify passed unit, Docker cloud, pipeline, Studio, Hostinger, goal, narration, privacy, iframe/session, discovery-public and Webreel tests and artifact upload. Dedicated PostgreSQL job passed and stopped its isolated container.
+- Backlog/validation references updated to this run. No open issue was closed: M3/human review and independent Cloud security/staging acceptance are still outstanding; Cloud API stays disabled.
+
+
+## UTV-009 branch investigation follow-up (2026-11-20)
+
+- Confirmed remote encryption branch is unchanged at `b4b8c0d8fc5d71c1de8c172c804d902aebc67197`; no PR exists, branch CI runs are cancelled. Kept the detached worktree separate and made no branch edits.
+- Reproduced four failures in a focused Node 22 test batch: request-rate persistence after restart returned 503 rather than 429; daily quota submission returned 503 rather than 202; monthly-use and storage-budget fixture jobs ended failed rather than completed. Encryption/scoped-download checks passed. The test command timed out at 300 seconds.
+- Updated backlog/validation to distinguish this branch failure from the successful mainline Docker CI. UTV-009 remains BLOCKED; did not merge, deploy, enable cloud mode or close issue #11.
