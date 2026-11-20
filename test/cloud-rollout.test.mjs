@@ -8,6 +8,8 @@ const tokenA = 'multi-replica-tenant-token-material-0123456789';
 const tokenB = 'multi-replica-tenant-token-rotated-0123456789';
 const auditKey = 'multi-replica-audit-signing-key-material-0123456789';
 const auditKeyId = createHash('sha256').update(auditKey).digest('hex').slice(0, 16);
+const artifactKey = '0123456789abcdef'.repeat(4);
+const artifactKeyId = createHash('sha256').update(Buffer.from(artifactKey, 'hex')).digest('hex').slice(0, 16);
 
 function snapshot(version = '2', token = tokenB) {
   return {
@@ -20,6 +22,7 @@ function snapshot(version = '2', token = tokenB) {
       projectIds: ['project-a'],
     }],
     auditKeyRing: { activeKeyId: auditKeyId, keys: { [auditKeyId]: auditKey } },
+    artifactKeyRing: { activeKeyId: artifactKeyId, keys: { [artifactKeyId]: artifactKey } },
   };
 }
 
@@ -393,6 +396,7 @@ test('replica bootstrap reload pins the requested immutable provider version', a
         auditAdmin: {
           keyMetadata: () => ({ activeKeyId: auditKeyId, keyIds: [auditKeyId] }),
         },
+        protectCloudArtifacts: async () => {},
       };
     },
   });
@@ -425,6 +429,7 @@ test('replica bootstrap rejects a secret provider that ignores the pinned versio
         auditAdmin: {
           keyMetadata: () => ({ activeKeyId: auditKeyId, keyIds: [auditKeyId] }),
         },
+        protectCloudArtifacts: async () => {},
       };
     },
   });

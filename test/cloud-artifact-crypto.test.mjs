@@ -116,7 +116,7 @@ test('cloud artifact encryption refuses symlinks and hard-linked files', async t
 
   await rm(path.join(jobDir, 'link.txt'));
   await link(outside, path.join(jobDir, 'hardlink.txt'));
-  await assert.rejects(cipher.encryptDirectory(root, jobId), /hard link|link count/i);
+  await assert.rejects(cipher.encryptDirectory(root, jobId), /hard link|link count|single-link/i);
 });
 
 test('cloud artifact key rotation retains old decryption keys and encrypts new files with the active key', () => {

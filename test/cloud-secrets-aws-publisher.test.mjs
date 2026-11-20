@@ -298,7 +298,8 @@ test('serializes concurrent writers and refuses the losing snapshot without over
   };
   const { publisher, calls, stages } = fakeAws(snapshot('41', tokenA), { publishLock });
   const makeInput = token => ({
-    snapshot: { tokens: snapshot('0', token).tokens, auditKeyRing: snapshot('0', token).auditKeyRing },
+    snapshot: { tokens: snapshot('0', token).tokens, auditKeyRing: snapshot('0', token).auditKeyRing,
+      artifactKeyRing: snapshot('0', token).artifactKeyRing },
     expectedCurrentVersion: '41',
   });
   const results = await Promise.allSettled([

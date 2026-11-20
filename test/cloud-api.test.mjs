@@ -245,7 +245,7 @@ test('Cloud API rate-limits per tenant and emits Retry-After', async t => {
   const restarted = createStudioServer(serverOptions(root, {
     cloudLimits: { maxRequestsPerMinute: 2 },
   }));
-  const restartedOrigin = await listen(restarted.server);
+  const restartedOrigin = await listen(restarted);
   activeServer = restarted.server;
   const stillLimited = await call(restartedOrigin, '/api/jobs', {
     token: tokenA, projectId: 'project-a',
@@ -262,7 +262,7 @@ test('Daily tenant quota survives Studio restart in SQLite', async t => {
   let first = createStudioServer(serverOptions(root, {
     cloudLimits: { maxJobsPerDay: 1 },
   }));
-  let origin = await listen(first.server);
+  let origin = await listen(first);
   const firstJob = await call(origin, '/api/discover', {
     method: 'POST', token: tokenA, projectId: 'project-a',
     body: { url: 'https://example.com', language: 'en', maxPages: 1 },
@@ -278,7 +278,7 @@ test('Daily tenant quota survives Studio restart in SQLite', async t => {
   const second = createStudioServer(serverOptions(root, {
     cloudLimits: { maxJobsPerDay: 1 },
   }));
-  origin = await listen(second.server);
+  origin = await listen(second);
   t.after(async () => {
     await new Promise(resolve => second.server.close(resolve));
     await rm(root, { recursive: true, force: true });
@@ -695,7 +695,7 @@ test('Cloud API meters tenant jobs and enforces a durable monthly job budget', a
       maxOutputBytesPerJob: 1024 * 1024 },
     cloudPricing: { workerCostPerSecondMicros: 100, artifactCostPerMiBMicros: 50 },
     cloudWorker: async job => {
-      await writeFile(path.join(job.outputDir, 'usage.bin'), Buffer.alloc(1024 * 1024, 7));
+      await writeFile(path.join(job.outputDir, 'usage.bin'), Buffer.alloc(900 * 1024, 7));
       return result;
     },
   }));
@@ -717,8 +717,9 @@ test('Cloud API meters tenant jobs and enforces a durable monthly job budget', a
   assert.equal(usage.data.tenantId, 'tenant-a');
   assert.equal(usage.data.estimateOnly, true);
   assert.equal(usage.data.usage.jobs, 1);
-  assert.equal(usage.data.usage.artifactBytes, 1024 * 1024);
-  assert.equal(usage.data.usage.storageBytes, 1024 * 1024);
+  assert.ok(usage.data.usage.artifactBytes > 900 * 1024);
+  assert.ok(usage.data.usage.artifactBytes <= 1024 * 1024);
+  assert.equal(usage.data.usage.storageBytes, usage.data.usage.artifactBytes);
   assert.ok(usage.data.usage.workerMs >= 0);
   assert.equal(usage.data.usage.estimatedCostMicros, 50 + Math.ceil(usage.data.usage.workerMs / 1000) * 100);
 
@@ -739,7 +740,7 @@ test('Cloud API reserves tenant storage before admission and enforces output byt
     cloudLimits: { maxJobsPerMonth: 10, maxStorageBytesPerTenant: 1024 * 1024,
       maxOutputBytesPerJob: 1024 * 1024 },
     cloudWorker: async job => {
-      await writeFile(path.join(job.outputDir, 'usage.bin'), Buffer.alloc(1024 * 1024, 9));
+      await writeFile(path.join(job.outputDir, 'usage.bin'), Buffer.alloc(900 * 1024, 9));
       return result;
     },
   }));
@@ -763,7 +764,8 @@ test('Cloud API reserves tenant storage before admission and enforces output byt
   assert.equal(blocked.status, 429);
   assert.match(blocked.data.error, /storage budget/);
   const usage = await call(origin, '/api/usage', { token: tokenA, projectId: 'project-a' });
-  assert.equal(usage.data.usage.storageBytes, 1024 * 1024);
+  assert.ok(usage.data.usage.storageBytes > 900 * 1024);
+  assert.ok(usage.data.usage.storageBytes <= 1024 * 1024);
   assert.equal(usage.data.usage.reservedStorageBytes, 0);
 });
 
