@@ -83,8 +83,9 @@ Trong lượt này các output E2E được chuyển sang UUID-unique để trá
 - Backlog/validation references updated to this run. No open issue was closed: M3/human review and independent Cloud security/staging acceptance are still outstanding; Cloud API stays disabled.
 
 
-## UTV-009 branch investigation follow-up (2026-11-20)
+## UTV-009 branch follow-up (2026-11-20)
 
-- Confirmed remote encryption branch is unchanged at `b4b8c0d8fc5d71c1de8c172c804d902aebc67197`; no PR exists, branch CI runs are cancelled. Kept the detached worktree separate and made no branch edits.
-- Reproduced four failures in a focused Node 22 test batch: request-rate persistence after restart returned 503 rather than 429; daily quota submission returned 503 rather than 202; monthly-use and storage-budget fixture jobs ended failed rather than completed. Encryption/scoped-download checks passed. The test command timed out at 300 seconds.
-- Updated backlog/validation to distinguish this branch failure from the successful mainline Docker CI. UTV-009 remains BLOCKED; did not merge, deploy, enable cloud mode or close issue #11.
+- Pushed fixture and assertion corrections to `feat/utv-009-cloud-artifact-encryption` as `3b5d188f28aa0dfb9ca5aaaf6657bf1e6b972654`; changes cover artifact-protection startup on restart, ciphertext storage overhead within existing physical caps, required test key rings, and hard-link error wording.
+- Full branch `npm test` on Node 22.23.5: **192 passed, 0 failed, 4 PostgreSQL tests skipped**. GitHub Actions [44797625970](https://github.com/hieugc/url-to-tutorial/actions/runs/44797625970) completed **SUCCESS** across verify, macOS regression and PostgreSQL coordination.
+- Pushed documentation reconciliation on main as `594709ca222d9d8978679d47ad54e6f99146962a`; main’s corresponding run 44797090240 was queued at last check.
+- UTV-009 remains BLOCKED: no PR, merge, deployment or independent security acceptance. Cloud API remains disabled; no issue was closed.

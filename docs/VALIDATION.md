@@ -237,8 +237,9 @@ GitHub Issues #3–#13 remain OPEN; no issue was closed based on incomplete acce
 - Human MacBook M3 visual/audio/performance review, live authorized AI usage, authenticated real-site review, and independent UTV-009 security/staging acceptance remain external gates. UTV-009 remains disabled/not deployed.
 
 
-## UTV-009 encryption branch recheck (2026-11-20)
+## UTV-009 encryption branch recheck (2026-11-20; updated after CI)
 
-- Remote branch `origin/feat/utv-009-cloud-artifact-encryption` remains at `b4b8c0d8fc5d71c1de8c172c804d902aebc67197`; no PR is open and its GitHub Actions runs are cancelled. The existing detached worktree remains separate from main; no implementation changes were retained there.
-- Node 22 focused reruns reproduced the restart defects: request-rate persistence expected 429 but received 503; daily quota submission expected 202 but received 503. The latter was traced to its test fixture listening directly on `server` rather than the Studio object that runs `protectCloudArtifacts()`; a temporary fixture correction passed, then was reverted rather than retained without a full branch test run. Monthly usage and storage-budget worker fixtures still end `failed` instead of `completed`; a minimal independent worker reproduction completed, so those failures remain fixture/policy unresolved. The earlier batch timed out after reporting four failures.
-- Do not merge or deploy this branch. Mainline exact-HEAD CI run 44694492183 remains SUCCESS; its cloud Docker test does not validate this encryption branch. UTV-009 remains BLOCKED and Cloud API remains disabled pending a complete branch test pass, deployment evidence and independent security acceptance.
+- Remote branch `origin/feat/utv-009-cloud-artifact-encryption` was updated to `3b5d188f28aa0dfb9ca5aaaf6657bf1e6b972654`. No PR is open; the detached worktree remains separate from main.
+- The pushed test fixes correct restart fixtures to run artifact protection before listening, leave physical ciphertext headroom under the output/storage cap, include required artifact keys in cloud secret fixtures, and match the hard-link error wording. Physical disk accounting and caps were not loosened.
+- Full local `npm test` on Node 22: **192 passed, 0 failed, 4 PostgreSQL skips**. Feature workflow [44797625970](https://github.com/hieugc/url-to-tutorial/actions/runs/44797625970) completed **SUCCESS** on verify, macOS regression, and PostgreSQL coordination jobs.
+- UTV-009 remains BLOCKED despite test success: no PR, deployment evidence or independent security acceptance. Cloud API remains disabled. The main workflow for documentation commit `594709c` is queued as run 44797090240.
