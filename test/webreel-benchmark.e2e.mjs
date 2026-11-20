@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdir, writeFile, readFile, mkdtemp, rm } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
@@ -17,7 +17,7 @@ const html = '<!doctype html><html><head><meta charset="utf-8"><title>Capture A/
   '<section id="features"><h2>Features</h2><p>Fast setup, clear steps, and a safe read-only demo.</p></section>' +
   '</main></body></html>';
 
-const root = path.resolve('output/webreel-ab');
+const root = path.resolve('output/webreel-ab-' + randomUUID());
 const toolRoot = await mkdtemp(path.join(tmpdir(), 'utv-webreel-'));
 await mkdir(root, { recursive: true });
 const server = createServer((_req, res) => {
