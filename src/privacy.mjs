@@ -29,8 +29,11 @@ export function privacyBoot({ selectors = [] } = {}) {
       for (const selector of custom) {
         for (const el of document.querySelectorAll(selector)) hide(el);
       }
+      delete document.documentElement.dataset.tutorialPrivacyError;
     } catch (error) {
       window.__tutorialPrivacyError = 'Invalid redaction selector: ' + error.message;
+      document.documentElement?.removeAttribute('data-tutorial-privacy-ready');
+      document.documentElement?.setAttribute('data-tutorial-privacy-error', window.__tutorialPrivacyError);
     }
   };
   const style = document.createElement('style');
@@ -45,8 +48,13 @@ export function privacyBoot({ selectors = [] } = {}) {
     '[data-sensitive],[data-private]{visibility:hidden!important;}';
   const install = () => {
     if (!document.documentElement) return;
+    document.documentElement.removeAttribute('data-tutorial-privacy-ready');
     document.documentElement.append(style);
     scan();
+    if (!window.__tutorialPrivacyError) {
+      document.documentElement.setAttribute('data-tutorial-privacy-ready', 'true');
+      document.documentElement.removeAttribute('data-tutorial-privacy-error');
+    }
   };
   if (document.documentElement) install();
   else document.addEventListener('DOMContentLoaded', install, { once: true });
@@ -80,7 +88,12 @@ export async function assertSafeCapture(page) {
     let status;
     try {
       status = await frame.evaluate(() => {
-        if (window.__tutorialPrivacyError) return { error: window.__tutorialPrivacyError };
+        if (window.__tutorialPrivacyError || document.documentElement?.dataset.tutorialPrivacyError) {
+          return { error: window.__tutorialPrivacyError || document.documentElement.dataset.tutorialPrivacyError };
+        }
+        if (document.documentElement?.dataset.tutorialPrivacyReady !== 'true') {
+          return { error: 'Privacy guard is not ready; automatic capture stopped' };
+        }
         const visible = el => {
           if (!el) return false;
           const style = getComputedStyle(el);

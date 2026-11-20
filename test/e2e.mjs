@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { readFile, access } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { discover, explore, safePageLink } from '../src/discover.mjs';
@@ -43,7 +44,7 @@ try {
     ...assembled,
     steps: assembled.steps.map(step => step.action === 'navigate' ? { ...step, reviewed: true } : step),
   };
-  const multiPageResult = await render(approvedMultiPage, { outDir: 'output/e2e-multipage' });
+  const multiPageResult = await render(approvedMultiPage, { outDir: 'output/e2e-multipage-' + randomUUID() });
   assert.equal(multiPageResult.status, 'completed');
   assert.ok(multiPageResult.steps.some(step => step.id === 'navigate-page-2' && step.navigatedTo.endsWith('/guide')));
   assert.equal(multiPageResult.video.codec, 'h264');
@@ -55,12 +56,12 @@ try {
   assert.equal(diagnostic.pages[0].candidateCount, 0);
   await access('output/e2e-empty/discovery-page-1.png');
 
-  const overview = await render({ ...discovered, steps: discovered.steps.slice(0, 2).map(s => ({ ...s, holdMs: 500 })) }, { outDir: 'output/e2e-overview' });
+  const overview = await render({ ...discovered, steps: discovered.steps.slice(0, 2).map(s => ({ ...s, holdMs: 500 })) }, { outDir: 'output/e2e-overview-' + randomUUID() });
   assert.equal(overview.status, 'completed');
 
   const plan = JSON.parse(await readFile(new URL('../examples/demo.plan.json', import.meta.url), 'utf8'));
   plan.url = url;
-  const result = await render(plan, { outDir: 'output/e2e-demo' });
+  const result = await render(plan, { outDir: 'output/e2e-demo-' + randomUUID() });
   assert.equal(result.status, 'completed');
   assert.equal(result.video.codec, 'h264');
   assert.equal(result.video.width, 1280);
@@ -83,7 +84,7 @@ try {
         target: { css: '#cart' }, action: 'stop', holdMs: 500 },
     ],
   };
-  const branchResult = await render(branchPlan, { outDir: 'output/e2e-branch-true' });
+  const branchResult = await render(branchPlan, { outDir: 'output/e2e-branch-true-' + randomUUID() });
   const branchEntry = branchResult.steps.find(step => step.id === 'cart-check');
   assert.equal(branchEntry.branchDecision.matched, true);
   assert.ok(branchResult.steps.some(step => step.id === 'cart-found'));
@@ -91,7 +92,7 @@ try {
 
   const falseBranchPlan = structuredClone(branchPlan);
   falseBranchPlan.steps.find(step => step.id === 'cart-check').condition.target = { css: '#not-present' };
-  const falseBranchResult = await render(falseBranchPlan, { outDir: 'output/e2e-branch-false' });
+  const falseBranchResult = await render(falseBranchPlan, { outDir: 'output/e2e-branch-false-' + randomUUID() });
   assert.equal(falseBranchResult.steps.find(step => step.id === 'cart-check').branchDecision.matched, false);
   assert.ok(falseBranchResult.steps.some(step => step.id === 'cart-missing'));
   assert.ok(!falseBranchResult.steps.some(step => step.id === 'cart-found'));

@@ -169,3 +169,57 @@ Linux passed all 39 unit/process checks and all core/browser E2E suites, then st
 - UTV-004: candidate-label filtering of obvious PII, credential indicators, instruction-like text; reject unrelated AI-selected observed DOM IDs before composing a read-only plan. Commits `2084aa5`, `cfd6b36`, `cd9cda5`.
 - UTV-008: mask placeholder pseudo-elements and explicit nested rich-text within contenteditable controls; add Chromium E2E assertions. Commits `1a74872`, `3201408`.
 - New commits above are **not covered by run 42259928745**. Check the workflow attached to `3201408` for final regression results before calling those fixes verified.
+
+
+## Merlin full-task execution — local evidence (2026-11-20)
+
+Environment: macOS arm64, Node.js **22.23.5** (explicit nvm PATH; default Node 26 fails to launch because `libsimdjson.34.dylib` is missing). Repository `main` was `dbd833352407ee1a89d4d5da57702c723fd31b53`, equal to `origin/main` at inspection. Five pre-existing local modifications were preserved; this run additionally changed only Studio codec metadata + regression locators and made privacy E2E output paths unique to avoid overwriting an existing artifact.
+
+### Verified in this run
+
+- `npm test`: 174 PASS, 0 FAIL, 4 PostgreSQL tests initially SKIP when `COORDINATION_DATABASE_URL` was unset.
+- PostgreSQL coordination, rollout, break-glass and certificate integration tests: **4/4 PASS** against the already-running PostgreSQL 17 container using `pg` installed with `--no-save --package-lock=false`; no project dependency/lockfile was changed. The initial skips were therefore environmental, not known test failures.
+- `npm run test:e2e`: PASS; two-page discovery, true/false branches, H.264 1280×720 MP4 output and demo output.
+- `npm run test:studio:e2e`: PASS; downloaded `tutorial.mp4`, then asserted `#video-codec` = `h264`, `#video-audio` = `None`, and `#video-metadata` visible from the render report.
+- `npm run test:privacy:e2e`: PASS after changing the test output to a UUID-unique directory; privacy readiness, 9 masks, MFA stop and H.264 output verified. Existing output was not deleted.
+- `npm run test:iframe-session:e2e`: 4/4 PASS.
+- `npm run test:discovery-public:e2e`: PASS; two controlled pages, external redirect blocked before target access, zero automatic writes, MFA screenshot blocked; public example.com returned 200.
+- `npm run test:goal:e2e`: PASS; grounded selection, zero checkout requests, H.264 output.
+- `npm run test:webreel:e2e`: PASS; Playwright 25 fps and Webreel 30 fps H.264 artifacts at `output/webreel-ab/`. Harness explicitly identifies a SHA256-guarded compatibility patch and requires human visual/M3 performance review; file metrics are not a visual acceptance.
+- Cloud encryption branch test candidate: `origin/feat/utv-009-cloud-artifact-encryption` at `b4b8c0d8fc5d71c1de8c172c804d902aebc67197` (detached temporary worktree, no main worktree edits). Relevant tests: **5 failures**, then the batch timed out at 300 seconds. Failures included 503 where tests expected quota/submit responses and worker jobs reaching failed state. Not safe to merge; no Cloud API enablement.
+
+### Failed or blocked gates
+
+- `npm run test:narration:e2e`: PASS locally after confirming Homebrew `espeak-ng` is available. Both Vietnamese and English MP4s contain AAC audio, two narration clips, SRT/VTT captions and measured step timestamps. Human listening and M3 A/V sync acceptance remain open.
+- `npm run test:cloud:docker`: BLOCKED before image build because Docker configuration references missing `docker-credential-desktop`.
+- Encryption branch Docker/production staging, independent security review and AWS/KMS/ingress/tenant deployment are not established. Keep Cloud API disabled.
+- No M3 device visual/performance acceptance, full video human review, live billable AI API call, or live Hostinger manual pricing review was conducted in this run.
+- GitHub run 44671762184 completed successfully on `3e06d0a`; it proves CI configuration/mainline state at that commit, not uncommitted working-tree edits. The latest local source/test edits still require a completed CI run attached to their eventual commit.
+
+### Task disposition
+
+| Task | Status | Evidence / remaining gate |
+|---|---|---|
+| UTV-001 | PARTIAL | Pipeline E2E H.264 pass; M3 playback/CPU/RAM and human video review open. |
+| UTV-002 | PARTIAL | Prior fixture/live CI evidence in this file; local privacy-safe Hostinger changes preserved; manual current live-site/video review open. |
+| UTV-003 | PARTIAL | Studio UI now reads actual codec/audio report metadata; dedicated locators/assertions and Studio E2E pass; new CI and M3 visual review open. |
+| UTV-004 | PARTIAL | Goal E2E and existing mocked/offline evidence; live authorized model key and privacy/relevance review absent. |
+| UTV-005 | PARTIAL | Unit suite and local narration E2E PASS for VI/EN AAC + SRT/VTT; human listening/A-V sync on M3 open. |
+| UTV-006 | PARTIAL | Webreel A/B E2E passes with disclosed compatibility patch; human visual/M3 benchmark open. |
+| UTV-007 | PARTIAL | Persistence unit coverage passes within suite; PostgreSQL integrations pass; full process/M3 acceptance and current CI pending. |
+| UTV-008 | PARTIAL | Privacy, iframe/session and MFA E2E pass; authenticated real-site/M3 review open. |
+| UTV-009 | BLOCKED | Encryption branch test failures/timeout; Docker helper and staging/security gates unresolved; not merged or enabled. |
+| UTV-010 | PARTIAL | Discovery-public E2E pass; real-site breadth and human evidence review open. |
+| UTV-011 | PARTIAL | Both branch outcomes and continuous multipage H.264 E2E pass; human visual transition/M3 review open. |
+
+GitHub Issues #3–#13 remain OPEN; no issue was closed based on incomplete acceptance. Studio metadata change was committed and pushed to `main` as `7ddd20e0b9e6048211b4a0739999a23a4f290e97`. Its earlier run was cancelled; the successful workflow run 44671762184 is attached to the later self-hosted CI configuration commit `3e06d0a`, not the Studio SHA. Current local diffs need their own successful workflow before claiming CI proof.
+
+
+## Self-hosted runner conversion (2026-11-20)
+
+- Workflow commit `3e06d0ac3c1f3d15bdb93cb1c7e32de71655d93d` pushed to `main`; all GitHub workflows now target `[self-hosted, macOS, ARM64]`, matching online runner `hieu`.
+- Linux-only setup was replaced with macOS/Homebrew equivalents; PostgreSQL CI uses a disposable Docker container and a dedicated host port, with an always-run stop step.
+- Actions run: https://github.com/hieugc/url-to-tutorial/actions/runs/44671762184 — **SUCCESS** on the self-hosted macOS ARM64 runner. `verify`, `postgres-coordination` (all four PostgreSQL integration tests), `macos-regression`, and gated `consolidate-audited-branches` all completed successfully.
+- Local regression on Node.js 22.23.5 after the workflow push: `npm test` **174 passed, 0 failed, 4 PostgreSQL tests skipped** (the four are executed in the dedicated CI job).
+- Local machine has Docker and FFmpeg; `espeak-ng` is available from Homebrew and narration E2E now passes locally. `npm run test:cloud:docker` still fails before build because Docker's configured `docker-credential-desktop` executable is missing; CI's cloud Docker E2E passed.
+- At last check, source/test/document edits remain in the working tree and are not included in the workflow commit. Latest locally verified run on Node 22.23.5: unit tests 174 passed, 0 failed, 4 PostgreSQL tests skipped (those 4 passed in CI run 44671762184); `test:e2e`, Studio, Hostinger, goal, narration VI/EN, privacy, iframe-session (4/4), discovery-public, and Webreel A/B all PASS. `test:cloud:docker` remains locally blocked by the missing Docker credential helper.

@@ -165,7 +165,7 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
     // already requested it. Fail closed on ALL main-document redirects until a
     // redirect-aware isolated egress policy exists. This can reject canonical
     // URL redirects; the user must provide the destination URL directly.
-    let refusedRedirect = false;
+    let refusedRedirectUrl = null;
     await context.route('**/*', async route => {
       const request = route.request();
       if (!['GET', 'HEAD'].includes(request.method().toUpperCase())) {
@@ -188,7 +188,7 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
       try {
         const response = await route.fetch({ maxRedirects: 0, timeout: 30000 });
         if (response.status() >= 300 && response.status() < 400) {
-          refusedRedirect = true;
+          refusedRedirectUrl = request.url();
           await route.abort('blockedbyclient');
           return;
         }
@@ -205,6 +205,7 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
       const entry = { requestedUrl, status: null, finalUrl: null, title: '', candidateCount: 0, candidates: [], outgoingLinks: [], screenshot: null };
       report.pages.push(entry);
       let safeToScreenshot = false;
+      refusedRedirectUrl = null;
       try {
         const response = await page.goto(requestedUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         await ready(page);
@@ -237,7 +238,7 @@ export async function explore(url, { headed = false, language = 'vi', maxPages =
           if (!visited.has(next) && !queue.includes(next) && queue.length < 50) queue.push(next);
         }
       } catch (error) {
-        entry.error = refusedRedirect
+        entry.error = refusedRedirectUrl === requestedUrl
           ? 'Redirect refused before following target; provide the final canonical URL'
           : error.message;
         if (outDir && !entry.screenshot && safeToScreenshot) {

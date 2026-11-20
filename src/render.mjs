@@ -1,5 +1,6 @@
-import { mkdir, writeFile, access } from 'node:fs/promises';
+import { mkdir, writeFile, access, link, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { launch, ready } from './browser.mjs';
 import { Plan, uniqueTarget, evaluateCondition, validatePlanForExecution } from './plan.mjs';
@@ -76,7 +77,7 @@ export async function render(input, {
   };
   const saveReport = () => writeFile(path.join(root, 'report.json'), JSON.stringify(report, null, 2));
   await saveReport();
-  let browser, context, loginContext, video;
+  let browser, context, loginContext, video, encodedTemp;
   const abortHandler = () => {
     context?.close().catch(() => {});
     loginContext?.close().catch(() => {});
@@ -194,11 +195,20 @@ export async function render(input, {
       throwIfAborted(signal);
       const raw = await video.path();
       const output = path.join(root, 'tutorial.mp4');
-      await command('ffmpeg', ['-y', '-i', raw, '-an', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', output], { signal });
-      const probe = JSON.parse(await command('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', output], { signal }));
+      encodedTemp = path.join(root, '.tutorial-' + randomUUID() + '.mp4');
+      await command('ffmpeg', ['-n', '-i', raw, '-an', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', encodedTemp], { signal });
+      const probe = JSON.parse(await command('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', encodedTemp], { signal }));
       const stream = probe.streams.find(s => s.codec_type === 'video');
       if (!stream || stream.codec_name !== 'h264' || stream.width !== plan.viewport.width || stream.height !== plan.viewport.height || Number(probe.format.duration) <= 0)
         throw new Error('Encoded video failed verification');
+      try {
+        await link(encodedTemp, output);
+        await unlink(encodedTemp);
+        encodedTemp = undefined;
+      } catch (error) {
+        if (error.code === 'EEXIST') throw new Error('Output already contains tutorial.mp4; choose a new --out directory');
+        throw error;
+      }
       report.video = {
         path: output,
         width: stream.width,
@@ -225,6 +235,7 @@ export async function render(input, {
     throw error;
   } finally {
     signal?.removeEventListener('abort', abortHandler);
+    if (encodedTemp) await unlink(encodedTemp).catch(() => {});
     await loginContext?.close().catch(() => {});
     await context?.close().catch(() => {});
     await browser?.close().catch(() => {});

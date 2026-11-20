@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { access, readFile } from 'node:fs/promises';
 import { explore, safePageLink } from '../src/discover.mjs';
 
-const root = 'output/e2e-discovery-public';
+const root = 'output/e2e-discovery-public-' + randomUUID();
 let formSubmissions = 0;
 let automaticWrites = 0;
 let readOnlyPings = 0;

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { access } from 'node:fs/promises';
 import { launch, ready } from '../src/browser.mjs';
@@ -37,6 +38,7 @@ try {
   await page.goto(url);
   await ready(page);
   await page.waitForTimeout(130);
+  assert.equal(await page.locator('html').getAttribute('data-tutorial-privacy-ready'), 'true');
   await assertSafeCapture(page);
   for (const selector of ['#name', '#card', '#notes', '#dynamic', '#placeholder', '#editable', '#nested-content']) {
     const style = await page.locator(selector).evaluate(el => ({
@@ -74,10 +76,11 @@ try {
         action: 'stop', holdMs: 500 },
     ],
   };
-  const rendered = await render(plan, { outDir: 'output/e2e-privacy' });
+  const outDir = 'output/e2e-privacy-' + randomUUID();
+  const rendered = await render(plan, { outDir });
   assert.equal(rendered.status, 'completed');
   assert.equal(rendered.video.codec, 'h264');
-  await access('output/e2e-privacy/step-1.png');
+  await access(outDir + '/step-1.png');
   console.log(JSON.stringify({ result: 'PASS', maskCount: 9, mfaStop: true, video: rendered.video }));
 } finally {
   await browser?.close();

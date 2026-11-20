@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createGoalGuide } from '../src/goal-planner.mjs';
 import { Plan } from '../src/plan.mjs';
 import { render } from '../src/render.mjs';
 
+const evidenceDir = 'output/e2e-goal-' + randomUUID();
+const videoDir = 'output/e2e-goal-video-' + randomUUID();
 const pageHtml = [
   '<!doctype html><html lang="vi"><title>Goal planner fixture</title>',
   '<style>body{font:18px sans-serif;margin:0;background:#f6faf8}',
@@ -27,7 +30,7 @@ try {
   const { plan, evidence } = await createGoalGuide(base, {
     goal: 'Giới thiệu Premium hosting',
     language: 'vi',
-    outDir: 'output/e2e-goal',
+    outDir: evidenceDir,
   });
   Plan.parse(plan);
   assert.ok(plan.steps.length > 1);
@@ -38,13 +41,13 @@ try {
     ...plan,
     steps: plan.steps.map(step => ({ ...step, holdMs: 500 })),
   };
-  const result = await render(short, { outDir: 'output/e2e-goal-video' });
+  const result = await render(short, { outDir: videoDir });
   assert.equal(result.status, 'completed');
   assert.equal(result.video.codec, 'h264');
   assert.equal(result.video.width, 1280);
   assert.equal(requestsToCheckout, 0);
-  await readFile('output/e2e-goal/goal-evidence.json', 'utf8');
-  await readFile('output/e2e-goal/discovery-page-1.png');
+  await readFile(evidenceDir + '/goal-evidence.json', 'utf8');
+  await readFile(evidenceDir + '/discovery-page-1.png');
   console.log(JSON.stringify({
     status: 'PASS', selected: evidence.selectedIds,
     requestsToCheckout, video: result.video,

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launch, ready } from '../browser.mjs';
 import { Plan } from '../plan.mjs';
+import { installPrivacy, assertSafeCapture } from '../privacy.mjs';
 
 const HOSTS = new Set(['hostinger.com', 'www.hostinger.com']);
 const PLAN_LABELS = [
@@ -205,6 +206,7 @@ export async function createHostingerGuide(url, {
     if (signal?.aborted) throw Object.assign(new Error('Hostinger inspection cancelled'), { name: 'AbortError' });
     browser = await launch(headed);
     context = await browser.newContext({ viewport: { width: 1280, height: 720 }, locale: language === 'vi' ? 'vi-VN' : 'en-US' });
+    await installPrivacy(context);
     const page = await context.newPage();
     await context.route('**/*', async route => {
       const request = route.request();
@@ -230,7 +232,9 @@ export async function createHostingerGuide(url, {
         item.finalUrl = page.url();
         validateHostingerUrl(item.finalUrl);
         if (item.status >= 400) throw new Error('HTTP ' + item.status);
+        await assertSafeCapture(page);
         for (let attempt = 0; attempt < 4; attempt++) {
+          await assertSafeCapture(page);
           observed = await inspectHostingerPage(page);
           if (observed.cards.length) break;
           if (attempt < 3) await page.waitForTimeout(800);
@@ -244,13 +248,16 @@ export async function createHostingerGuide(url, {
       }
     }
     if (root) {
+      await assertSafeCapture(page);
       // Keep the evidence frame centered on the exact plan card, rather than
       // a generic hero section above the pricing table.
       const chosen = observed?.cards?.find(card => card.name.toLowerCase() === focus.toLowerCase()) || observed?.cards?.[0];
       if (chosen) {
+        await assertSafeCapture(page);
         try { await page.locator(chosen.selector).scrollIntoViewIfNeeded({ timeout: 6000 }); }
         catch (error) { report.warnings.push('Could not scroll pricing card into view: ' + error.message); }
       }
+      await assertSafeCapture(page);
       report.screenshot = 'hostinger-pricing.png';
       await page.screenshot({ path: path.join(root, report.screenshot), fullPage: false });
     }
