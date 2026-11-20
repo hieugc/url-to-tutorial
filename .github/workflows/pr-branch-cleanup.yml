@@ -18,7 +18,7 @@ jobs:
        startsWith(github.event.pull_request.head.ref, 'fix/') ||
        startsWith(github.event.pull_request.head.ref, 'chore/') ||
        startsWith(github.event.pull_request.head.ref, 'test/'))
-    runs-on: ubuntu-latest
+    runs-on: [ubuntu-latest, self-hosted]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
