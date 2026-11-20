@@ -12,7 +12,7 @@ permissions:
   contents: read
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: [ubuntu-latest, self-hosted]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +43,7 @@ jobs:
           retention-days: 7
 
   postgres-coordination:
-    runs-on: ubuntu-latest
+    runs-on: [ubuntu-latest, self-hosted]
     timeout-minutes: 10
     services:
       postgres:
@@ -72,7 +72,7 @@ jobs:
           COORDINATION_DATABASE_URL: postgres://postgres:tutorial-test@localhost:5432/tutorial_test
 
   macos-regression:
-    runs-on: macos-15
+    runs-on: [macos-15, self-hosted]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -107,7 +107,7 @@ jobs:
     # unavailable macOS runner capacity must not block safe ref-only housekeeping.
     needs: [verify]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.verify.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: [ubuntu-latest, self-hosted]
     timeout-minutes: 5
     permissions:
       contents: write
