@@ -1,5 +1,7 @@
 # URL to Tutorial
 
+**Bàn giao cho Merlin:** [Blueprint của 11 task và thứ tự thi công](docs/merlin/README.md).
+
 Nhập URL → tạo kịch bản chỉnh sửa được → Driver.js spotlight → video MP4.
 
 MVP local-first cho hướng dẫn sử dụng website, bắt nguồn từ bài toán quay video hướng dẫn mua hosting. Có demo hosting giả lập, không giao dịch thật. **Đã có Studio local và goal planner; chưa phải SaaS AI production hoàn chỉnh.**
