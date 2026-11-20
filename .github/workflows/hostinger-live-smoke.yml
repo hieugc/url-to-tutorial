@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   pricing:
-    runs-on: ubuntu-latest
+    runs-on: [ubuntu-latest, self-hosted]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
