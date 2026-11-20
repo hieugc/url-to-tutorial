@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, readFile } from 'node:fs/promises';
 import { renderNarrated } from '../src/narration.mjs';
@@ -15,7 +16,8 @@ const server = createServer((_req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   const base = 'http://127.0.0.1:' + server.address().port;
-  await mkdir('output/e2e-narration', { recursive: true });
+  const outputRoot = 'output/e2e-narration-' + randomUUID();
+  await mkdir(outputRoot, { recursive: true });
   for (const language of ['vi', 'en']) {
     const plan = {
       schemaVersion: 1, title: 'Narration smoke', url: base, language,
@@ -28,7 +30,7 @@ try {
           action: 'stop', holdMs: 500 },
       ],
     };
-    const root = 'output/e2e-narration/' + language;
+    const root = outputRoot + '/' + language;
     const result = await renderNarrated(plan, { outDir: root });
     assert.equal(result.status, 'completed');
     assert.equal(result.video.codec, 'h264');
