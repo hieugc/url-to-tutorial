@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { inspectHostingerPage, hostingerPricingPlan } from '../src/adapters/hostinger.mjs';
 import { render } from '../src/render.mjs';
 
-const outDir = path.resolve('output/e2e-hostinger');
+const outDir = path.resolve('output/e2e-hostinger-' + randomUUID());
 await mkdir(outDir, { recursive: true });
 let purchaseRequests = 0;
 
