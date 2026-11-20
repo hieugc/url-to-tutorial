@@ -33,7 +33,8 @@ jobs:
       - run: npm run test:privacy:e2e
       - run: npm run test:iframe-session:e2e
       - run: npm run test:discovery-public:e2e
-      - run: npm run benchmark -- output/e2e-demo/tutorial.mp4
+      - run: >-
+          node --input-type=module -e "import { readdir, stat } from 'node:fs/promises'; import { join } from 'node:path'; import { inspectVideo } from './src/benchmark.mjs'; const dirs = (await readdir('output')).filter(name => name.startsWith('e2e-demo-')); const files = await Promise.all(dirs.map(async name => ({ name, mtime: (await stat(join('output', name, 'tutorial.mp4'))).mtimeMs }))); const latest = files.sort((a, b) => b.mtime - a.mtime)[0]; if (!latest) throw new Error('No E2E demo output found'); console.log(JSON.stringify(await inspectVideo(join('output', latest.name, 'tutorial.mp4'))));"
       - run: npm run test:webreel:e2e
       - uses: actions/upload-artifact@v4
         if: always()
@@ -95,7 +96,8 @@ jobs:
       - run: npm run test:privacy:e2e
       - run: npm run test:iframe-session:e2e
       - run: npm run test:discovery-public:e2e
-      - run: npm run benchmark -- output/e2e-demo/tutorial.mp4
+      - run: >-
+          node --input-type=module -e "import { readdir, stat } from 'node:fs/promises'; import { join } from 'node:path'; import { inspectVideo } from './src/benchmark.mjs'; const dirs = (await readdir('output')).filter(name => name.startsWith('e2e-demo-')); const files = await Promise.all(dirs.map(async name => ({ name, mtime: (await stat(join('output', name, 'tutorial.mp4'))).mtimeMs }))); const latest = files.sort((a, b) => b.mtime - a.mtime)[0]; if (!latest) throw new Error('No E2E demo output found'); console.log(JSON.stringify(await inspectVideo(join('output', latest.name, 'tutorial.mp4'))));"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
