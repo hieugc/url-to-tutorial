@@ -18,8 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.5
       - run: npm ci
       - run: npx playwright install chromium
       - run: brew install ffmpeg espeak-ng
@@ -50,8 +49,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.5
       - run: npm ci
       - run: npm install --no-save --package-lock=false pg@8.16.3
       - name: Start isolated PostgreSQL for integration tests
@@ -81,8 +79,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 22.23.5
       - run: 'echo "macOS runner architecture: $(uname -m)"'
       - run: npm ci
       - run: npx playwright install chromium
