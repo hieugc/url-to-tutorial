@@ -89,6 +89,25 @@ jobs:
       - run: brew install ffmpeg espeak-ng
       - run: npm test
       - run: npm run test:e2e
+      - name: UTV-001 CLI demo and Mac resource profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output/utv001-cli-demo
+          {
+            printf 'timestamp_utc=%s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf 'architecture=%s\\n' "$(uname -m)"
+            printf 'macos_version=%s\\n' "$(sw_vers -productVersion)"
+            printf 'cpu_brand=%s\\n' "$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)"
+            printf 'physical_memory_bytes=%s\\n' "$(sysctl -n hw.memsize)"
+            printf 'node_version=%s\\n' "$(node --version)"
+            printf 'npm_version=%s\\n' "$(npm --version)"
+          } > output/utv001-cli-demo/system-info.txt
+          /usr/bin/time -l npm run demo -- --out output/utv001-cli-demo \\
+            > output/utv001-cli-demo/demo.stdout.log \\
+            2> output/utv001-cli-demo/resource-usage.txt
+          npm run benchmark -- output/utv001-cli-demo/tutorial.mp4 \\
+            > output/utv001-cli-demo/video-benchmark.json
       - run: npm run test:studio:e2e
       - run: npm run test:hostinger:e2e
       - run: npm run test:goal:e2e
