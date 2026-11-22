@@ -103,8 +103,9 @@ jobs:
           /usr/bin/time -l npm run demo -- --out output/utv001-cli-demo \
             > output/utv001-cli-demo/demo.stdout.log \
             2> output/utv001-cli-demo/resource-usage.txt
-          npm run benchmark -- output/utv001-cli-demo/tutorial.mp4 \
+          node src/benchmark.mjs output/utv001-cli-demo/tutorial.mp4 \
             > output/utv001-cli-demo/video-benchmark.json
+          node --input-type=module -e "import { readFileSync } from 'node:fs'; const evidence = JSON.parse(readFileSync('output/utv001-cli-demo/video-benchmark.json', 'utf8')); if (!evidence.baseline?.codec || !evidence.baseline?.durationSec || !evidence.baseline?.frameCount) throw new Error('Invalid UTV-001 video benchmark evidence');"
       - run: npm run test:studio:e2e
       - run: npm run test:hostinger:e2e
       - run: npm run test:goal:e2e
