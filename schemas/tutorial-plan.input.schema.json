@@ -1,0 +1,490 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "language": {
+      "default": "vi",
+      "type": "string",
+      "enum": [
+        "vi",
+        "en"
+      ]
+    },
+    "mode": {
+      "default": "overview",
+      "type": "string",
+      "enum": [
+        "overview",
+        "task"
+      ]
+    },
+    "viewport": {
+      "default": {
+        "width": 1280,
+        "height": 720
+      },
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 640,
+          "maximum": 1920
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 360,
+          "maximum": 1080
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ]
+    },
+    "steps": {
+      "minItems": 1,
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1200
+          },
+          "target": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "css": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "css"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "heading",
+                          "button",
+                          "link",
+                          "textbox",
+                          "combobox"
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "frame": {
+                    "type": "object",
+                    "properties": {
+                      "css": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "css"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "target": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "css": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "css"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "heading",
+                              "button",
+                              "link",
+                              "textbox",
+                              "combobox"
+                            ]
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "frame",
+                  "target"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "action": {
+            "default": "highlight",
+            "type": "string",
+            "enum": [
+              "highlight",
+              "click",
+              "fill",
+              "navigate",
+              "branch",
+              "stop"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "holdMs": {
+            "default": 3000,
+            "type": "integer",
+            "minimum": 500,
+            "maximum": 30000
+          },
+          "reviewed": {
+            "default": false,
+            "type": "boolean"
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "css": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "css"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "heading",
+                          "button",
+                          "link",
+                          "textbox",
+                          "combobox"
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "frame": {
+                    "type": "object",
+                    "properties": {
+                      "css": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "css"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "target": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "css": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "css"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "heading",
+                              "button",
+                              "link",
+                              "textbox",
+                              "combobox"
+                            ]
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "frame",
+                  "target"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "condition": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "css": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "css"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "heading",
+                              "button",
+                              "link",
+                              "textbox",
+                              "combobox"
+                            ]
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "frame": {
+                        "type": "object",
+                        "properties": {
+                          "css": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "css"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "target": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "css": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "css"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "heading",
+                                  "button",
+                                  "link",
+                                  "textbox",
+                                  "combobox"
+                                ]
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "role",
+                              "name"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "frame",
+                      "target"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "state": {
+                "default": "visible",
+                "type": "string",
+                "enum": [
+                  "visible",
+                  "hidden"
+                ]
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "additionalProperties": false
+          },
+          "onTrue": {
+            "type": "string",
+            "minLength": 1
+          },
+          "onFalse": {
+            "type": "string",
+            "minLength": 1
+          },
+          "next": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "redactSelectors": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "title",
+    "url",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "title": "TutorialPlanInput",
+  "description": "Structural tutorial plan contract. Custom Zod refinements (URL policy, even viewport dimensions, action requirements and graph integrity) and execution approval are enforced at runtime, not by this schema."
+}

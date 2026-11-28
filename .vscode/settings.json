@@ -1,0 +1,8 @@
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["**/*.plan.json", "**/plan.json"],
+      "url": "./schemas/tutorial-plan.input.schema.json"
+    }
+  ]
+}

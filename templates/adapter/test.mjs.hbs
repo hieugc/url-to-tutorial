@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { create{{pascalCase name}}Plan } from '../src/adapters/{{name}}.mjs';
+
+const observed = {
+  url: 'https://example.com/', title: 'Observed page',
+  sections: [{ title: 'Overview', description: 'Observed heading', selector: '#overview' }],
+};
+
+test('{{name}} creates an unapproved highlight-only plan from observed sections', () => {
+  const plan = create{{pascalCase name}}Plan(observed);
+  assert.equal(plan.steps[0].target.css, '#overview');
+  assert.equal(plan.steps[0].action, 'highlight');
+  assert.equal(plan.steps[0].reviewed, false);
+  assert.equal(plan.steps[0].holdMs, 3000);
+});
+
+test('{{name}} rejects missing evidence and unsafe URLs', () => {
+  assert.throws(() => create{{pascalCase name}}Plan({ ...observed, sections: [] }));
+  assert.throws(() => create{{pascalCase name}}Plan({ ...observed, url: 'file:///etc/passwd' }));
+  assert.throws(() => create{{pascalCase name}}Plan({ ...observed,
+    sections: [{ ...observed.sections[0], selector: '' }],
+  }));
+});

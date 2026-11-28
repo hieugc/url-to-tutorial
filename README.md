@@ -1,5 +1,7 @@
 # URL to Tutorial
 
+Compiler, schema/type generation, adapter scaffolding and build commands: [Toolchain guide](docs/TOOLCHAIN.md).
+
 **Bàn giao cho Merlin:** [Blueprint của 11 task và thứ tự thi công](docs/merlin/README.md).
 
 Nhập URL → tạo kịch bản chỉnh sửa được → Driver.js spotlight → video MP4.

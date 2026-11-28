@@ -1,0 +1,26 @@
+import { Plan } from '../plan.mjs';
+
+/**
+ * Convert previously observed, uniquely located page sections into a draft.
+ * Add site-specific observation and URL validation before wiring this adapter
+ * into the CLI/Studio. Selectors must come from actual page evidence.
+ */
+export function create{{pascalCase name}}Plan(observed) {
+  if (!Array.isArray(observed.sections) || !observed.sections.length) {
+    throw new Error('No observed sections; inspect the page before generating a plan');
+  }
+  return Plan.parse({
+    schemaVersion: 1,
+    title: observed.title,
+    url: observed.url,
+    mode: 'overview',
+    steps: observed.sections.map((section, index) => ({
+      id: 'section-' + (index + 1),
+      title: section.title,
+      description: section.description,
+      target: { css: section.selector },
+      action: 'highlight',
+      reviewed: false,
+    })),
+  });
+}
